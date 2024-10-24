@@ -1,0 +1,10 @@
+{
+    "sourceDatabaseURL": "jdbc:mysql://[IP]:5432/[Database]",
+	"sourceDatabaseUser": "[User]",
+	"sourceDatabasePassword": "[Password]",
+	
+	"sourceScheme": "https",
+	"sourceHost": "[IP]:[Port]",
+    "sourceUser": "[User]",
+    "sourcePassword": "[Password]"
+}

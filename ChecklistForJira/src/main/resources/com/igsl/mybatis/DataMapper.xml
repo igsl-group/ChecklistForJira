@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.igsl.mybatis.DataMapper">
+
+    <resultMap id="Project" type="com.igsl.mybatis.Project">
+        <id column="projectid" property="projectId"/>
+        <result column="projectkey" property="projectKey"/>
+        <result column="projectname" property="projectName"/>
+    </resultMap>
+
+    <resultMap id="CustomField" type="com.igsl.mybatis.CustomField">
+        <id column="cfid" property="fieldId"/>
+        <result column="cfname" property="fieldName"/>
+        <result column="cftype" property="fieldType"/>
+        <collection property="projectList" resultMap="Project"/>
+    </resultMap>
+
+    <!-- 
+        The goal of this SQL is to:
+        1. Find custom fields of types provided by Checklist for Jira.
+        2. Find screens containing the field, and the projects using those screens.
+        3. Find screens containing the field, the workflows using those screens, and the projects using those workflows. 
+        
+        The output will mash projects/workflows from different screens together. 
+        This will only provide a list of projects using the fields, but not how. 
+        Which is sufficient for our needs to prevent custom field context applied to all projects, 
+        thus making Checklist for Jira appear for all projects in Cloud.
+    -->
+    <select id="getCustomFieldUsage" resultMap="CustomField">
+        <![CDATA[
+            SELECT DISTINCT * FROM (
+                SELECT
+                    cf.ID AS cfid
+                    , cf.cfname AS cfname
+                    , cf.CUSTOMFIELDTYPEKEY AS cftype
+                    , COALESCE(p.pkey, 'Global') AS projectkey
+                    , COALESCE(p.id, '0') AS projectid
+                    , p.pname AS projectname
+                    , COALESCE(it.id, '0') AS issuetypeid
+                    , COALESCE(it.pname, 'All') AS issuetypename
+                FROM 
+                    customfield cf 
+                    JOIN fieldscreenlayoutitem fsli ON fsli.FIELDIDENTIFIER = CONCAT('customfield_', cf.ID)
+                    JOIN fieldscreentab fst ON fst.ID = fsli.FIELDSCREENTAB
+                    JOIN fieldscreen fs ON fs.ID = fst.FIELDSCREEN
+                    JOIN fieldscreenschemeitem fssi ON fssi.FIELDSCREEN = fs.ID
+                    JOIN fieldscreenscheme fss ON fss.ID = fssi.FIELDSCREENSCHEME
+                    JOIN issuetypescreenschemeentity itsse ON itsse.FIELDSCREENSCHEME = fss.ID 
+                    JOIN issuetypescreenscheme itss ON itss.ID = itsse.SCHEME
+                    LEFT JOIN issuetype it ON it.ID = itsse.ISSUETYPE
+                    JOIN nodeassociation naScreen 
+                        ON naScreen.SINK_NODE_ID = itss.ID AND naScreen.SINK_NODE_ENTITY = 'IssueTypeScreenScheme'
+                    LEFT JOIN project p 
+                        ON p.ID = naScreen.SOURCE_NODE_ID AND naScreen.SINK_NODE_ENTITY = 'IssueTypeScreenScheme'
+                    WHERE cf.CUSTOMFIELDTYPEKEY LIKE 'com.okapya.jira.checklist:%'
+            UNION ALL
+                SELECT
+                    cf.ID AS cfid
+                    , cf.cfname AS cfname
+                    , cf.CUSTOMFIELDTYPEKEY as cftype
+                    , COALESCE(p.pkey, 'Global') AS projectkey
+                    , COALESCE(p.id, '0') AS projectid
+                    , p.pname AS projectname
+                    , COALESCE(it.id, '0') AS issuetypeid
+                    , COALESCE(it.pname, 'All') AS issuetypename
+                FROM 
+                    customfield cf
+                    JOIN fieldscreenlayoutitem fsli ON fsli.FIELDIDENTIFIER = CONCAT('customfield_', cf.ID)
+                    JOIN fieldscreentab fst ON fst.ID = fsli.FIELDSCREENTAB
+                    JOIN fieldscreen fs ON fs.ID = fst.FIELDSCREEN
+                    JOIN jiraworkflows wf 
+                        ON EXTRACTVALUE(wf.DESCRIPTOR, '//meta[@name = "jira.fieldscreen.id"]/text()') 
+                        RLIKE CONCAT('(^| )', fs.ID, '( |$)')
+                    JOIN workflowschemeentity wse ON wse.WORKFLOW = wf.workflowname
+                    JOIN workflowscheme ws ON ws.ID = wse.SCHEME
+                    LEFT JOIN issuetype it ON it.ID = wse.ISSUETYPE
+                    JOIN nodeassociation naWorkflow 
+                        ON naWorkflow.SINK_NODE_ID = ws.ID AND naWorkflow.SINK_NODE_ENTITY = 'WorkflowScheme'
+                    JOIN project p 
+                        ON p.ID = naWorkflow.SOURCE_NODE_ID AND naWorkflow.SINK_NODE_ENTITY = 'WorkflowScheme'
+                    WHERE cf.CUSTOMFIELDTYPEKEY LIKE 'com.okapya.jira.checklist:%'
+            ) tmp
+            ORDER BY
+                tmp.cfname
+                , tmp.projectkey
+                , tmp.issuetypeid
+        ]]>
+    </select>
+
+</mapper>

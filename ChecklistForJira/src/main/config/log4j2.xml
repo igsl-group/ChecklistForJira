@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="info" name="ChecklistForJira">
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="[%tid] %m%n" />
+        </Console>
+        <RollingFile name="RollingFile" 
+            fileName="ChecklistForJira.log" 
+            filePattern="ChecklistForJira.%d{yyyy-MM-dd-HH-mm-ss}.log.gz">
+            <PatternLayout>
+                <Pattern>%d %p %c{1.} [%tid] %m%n</Pattern>
+            </PatternLayout>
+            <Policies>
+                <SizeBasedTriggeringPolicy size="500 MB" />
+            </Policies>
+        </RollingFile>
+    </Appenders>
+    <Loggers>
+        <Root level="warn">
+            <AppenderRef ref="RollingFile" level="warn" />
+            <AppenderRef ref="Console" level="warn"/>
+        </Root>
+        <Logger name="org.htmlunit" level="off" additivity="false">
+            <AppenderRef ref="RollingFile" level="off" />
+            <AppenderRef ref="Console" level="off" />
+        </Logger>
+        <Logger name="org.apache.ibatis" level="warn" additivity="false">
+        	<AppenderRef ref="RollingFile" level="warn" />
+            <AppenderRef ref="Console" level="warn" />
+        </Logger>
+        <Logger name="com.igsl" level="debug" additivity="false">
+            <AppenderRef ref="RollingFile" level="debug" />
+            <AppenderRef ref="Console" level="info" />
+        </Logger>
+    </Loggers>
+</Configuration>
