@@ -18,8 +18,10 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.zip.GZIPInputStream;
 
@@ -266,8 +268,10 @@ public class ChecklistForJira {
 				Collectors.toMap(CustomField::getFieldId, item -> item));
 		// Output to CSV
 		Date now = new Date();
+		Log.info(LOGGER, "Reading GZ from [" + folder + "]");
 		Path gzDir = Paths.get(folder);
 		Path extractDir = Paths.get("GZ." + SDF.format(now));
+		Path csvProject = Paths.get("ChecklistProject." + SDF.format(now) + ".csv"); 
 		Path csvTemplate = Paths.get("ChecklistTemplate." + SDF.format(now) + ".csv"); 
 		Path csvUsage = Paths.get("ChecklistUsage." + SDF.format(now) + ".csv"); 
 		CSVFormat fmtTemplate = CSV.getCSVWriteFormat(Arrays.asList(
@@ -276,15 +280,26 @@ public class ChecklistForJira {
 				));
 		CSVFormat fmtUsage = CSV.getCSVWriteFormat(Arrays.asList(
 					"Project Key",
+					"Field Used in Project",
 					"Issue Type(s)",
-					"Template Name(s)"
+					"Field Name",
+					"Context Name", 
+					"Template Name",
+					"Template Empty"
+				));
+		CSVFormat fmtProject = CSV.getCSVWriteFormat(Arrays.asList(
+					"Project Key"
 				));
 		try {
 			Files.createDirectory(extractDir);
-			try (	FileWriter fwTemplate = new FileWriter(csvTemplate.toFile());
+			try (	FileWriter fwProject = new FileWriter(csvProject.toFile());
+					CSVPrinter project = new CSVPrinter(fwProject, fmtProject);					
+					FileWriter fwTemplate = new FileWriter(csvTemplate.toFile());
 					CSVPrinter template = new CSVPrinter(fwTemplate, fmtTemplate);
 					FileWriter fwUsage = new FileWriter(csvUsage.toFile()); 
 					CSVPrinter usage = new CSVPrinter(fwUsage, fmtUsage)) {
+				// Projects that uses Checklist for Jira
+				Set<String> projectList = new HashSet<>();
 				// Unzip GZ files
 				File[] gzList = gzDir.toFile().listFiles((dir, name) -> {
 					return name.toLowerCase().endsWith(".gz");
@@ -308,7 +323,6 @@ public class ChecklistForJira {
 					}
 				}
 				// Process all files
-				Map<String, TemplateData> templateData = new HashMap<>();	// Key is project key
 				ObjectReader reader = OM.readerFor(ChecklistForJiraData.class);
 				File[] extractedList = extractDir.toFile().listFiles();
 				for (File extractedFile : extractedList) {
@@ -321,11 +335,12 @@ public class ChecklistForJira {
 						continue;
 					}
 					if (data.isManifest()) {
+						Log.info(LOGGER, "Processing manifest [" + extractedFile + "]");
 						String customFieldId = String.valueOf(data.getFieldConfig().getCustomFieldId());
 						String customFieldName = data.getFieldConfig().getCustomFieldName();
 						String contextId = String.valueOf(data.getFieldConfig().getId());
 						String contextName = data.getFieldConfig().getName();
-						String templateName = customFieldName + " - " + contextName;
+						String templateName = customFieldName + " (" + contextId + ") " + contextName ;
 						List<ChecklistItem> checklistItems = data.getGlobalItems();
 						// Convert checklistItems to new format
 						String newChecklist = ChecklistItem.convert(checklistItems);
@@ -341,45 +356,70 @@ public class ChecklistForJira {
 						List<String> templateCols = splitChecklistTemplate(newChecklist);
 						templateCols.add(0, templateName);
 						template.printRecord((Object[]) templateCols.toArray(new String[0]));
-						// Output usage content
-						TemplateData templateDataItem = new TemplateData();
+						Log.info(LOGGER, "Template [" + templateName + "] processed");
+						// Record usage
+						StringBuilder issueTypes = new StringBuilder();
+						for (String issueTypeName : data.getFieldConfig().getIssueTypes().values()) {
+							issueTypes.append("\n").append(issueTypeName);
+						}
+						if (issueTypes.length() != 0) {
+							issueTypes.delete(0, 1);
+						} else if (issueTypes.length() == 0) {
+							issueTypes.append("All");
+						}
 						// If data (context) specifies 0 projects, 
 						// use project list from field map (screen/workflow) instead
-						List<String> projectList = new ArrayList<>();
 						if (data.getFieldConfig().getProjects().size() == 0) {
 							for (Project p : cf.getProjectList()) {
 								projectList.add(p.getProjectKey());
+								usage.printRecord(
+									"All",
+									p.getProjectKey(),
+									issueTypes.toString(), 
+									customFieldName,
+									contextName,
+									templateName,
+									(newChecklist.length() == 0)
+									);
+								Log.info(LOGGER, 
+										"Template [" + templateName + "] is associated with " + 
+										p.getProjectKey());
 							}
+							Log.info(LOGGER, 
+									"Template [" + templateName + "] is associated with " + 
+									cf.getProjectList().size() + " project(s)");
 						} else {
-							projectList.addAll(data.getFieldConfig().getProjects().values());
+							for (String p : data.getFieldConfig().getProjects().values()) {
+								projectList.add(p);
+								usage.printRecord(
+										p,
+										"N/A",
+										issueTypes.toString(), 
+										customFieldName,
+										contextName,
+										templateName,
+										(newChecklist.length() == 0)
+										);
+								Log.info(LOGGER, 
+										"Template [" + templateName + "] is associated with " + 
+										p);
+							}
+							Log.info(LOGGER, 
+									"Template [" + templateName + "] is associated with " + 
+									data.getFieldConfig().getProjects().values().size() + " project(s)");
 						}
-						templateDataItem.setTemplateName(templateName);
-						templateDataItem.getIssueTypeNameList().addAll(data.getFieldConfig().getIssueTypes().values());
-						for (String p : projectList) {
-							templateData.put(p, templateDataItem);
-						}
-					}	// Is manifest
+					}	// If manifest
 				} // For all extracted files
-				// Output template associations
-				for (Map.Entry<String, TemplateData> entry : templateData.entrySet()) {
-					StringBuilder issueTypes = new StringBuilder();
-					if (entry.getValue().getIssueTypeNameList().size() != 0) {
-						for (String issueType : entry.getValue().getIssueTypeNameList()) {
-							issueTypes.append("\n").append(issueType);
-						}
-						issueTypes.delete(0, 1);
-					} else {
-						issueTypes.append("All");
-					}
-					usage.printRecord(
-							entry.getKey(),
-							issueTypes, 
-							entry.getValue().getTemplateName());
-				}
+				// Write project list
+				for (String pKey : projectList) {
+					project.printRecord(pKey);
+				}				
 			} // Try file outputs
 		} finally {
 			FileUtils.deleteDirectory(extractDir.toFile());
 		}
+		Log.info(LOGGER, "Checklist for Jira templates written to: " + csvTemplate.toString());
+		Log.info(LOGGER, "Template usage written to: " + csvUsage.toString());
 	}
 	
 	private static void exportFieldList(Config conf) {
