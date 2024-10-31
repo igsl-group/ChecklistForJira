@@ -31,6 +31,7 @@ import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.http.NameValuePair;
 import org.apache.http.client.utils.URIBuilder;
 import org.apache.ibatis.datasource.pooled.PooledDataSource;
@@ -82,8 +83,9 @@ public class ChecklistForJira {
 			.enable(SerializationFeature.INDENT_OUTPUT)
 			.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
 	
-	private static final int BUFFER_SIZE = 10240;
-	private static final int MAX_COL_SIZE = 32767;
+	private static final int BUFFER_SIZE = 10240;	
+	private static final int MAX_COL_SIZE = 32767;	// Max col data size in a cell supported by Excel
+	private static final int MAX_TEMPLATE_NAME_LENGTH = 50;	// Max Checklist for Jira template name length
 	
 	public static SqlSessionFactory setupMyBatis(Config conf) throws Exception {
 		PooledDataSource ds = new PooledDataSource();
@@ -260,6 +262,20 @@ public class ChecklistForJira {
 		return result;
 	}
 	
+	private static String getTemplateName(String customFieldName, int contextCount, String contextId) {
+		String result;
+		if (contextCount > 1) {
+			result = StringUtils.left(
+						customFieldName, 
+						MAX_TEMPLATE_NAME_LENGTH - 1 - contextId.length()) + 
+					":" + contextId;
+		} else {
+			// Use custom field name
+			result = StringUtils.left(customFieldName, MAX_TEMPLATE_NAME_LENGTH);
+		}
+		return result;
+	}
+	
 	private static void exportUsage(
 			Config conf, 
 			List<CustomField> fieldList, 
@@ -280,7 +296,7 @@ public class ChecklistForJira {
 				));
 		CSVFormat fmtUsage = CSV.getCSVWriteFormat(Arrays.asList(
 					"Project Key",
-					"Field Used in Project",
+					"Context Applied to All Projects",
 					"Issue Type(s)",
 					"Field Name",
 					"Context Name", 
@@ -325,6 +341,26 @@ public class ChecklistForJira {
 				// Process all files
 				ObjectReader reader = OM.readerFor(ChecklistForJiraData.class);
 				File[] extractedList = extractDir.toFile().listFiles();
+				// First pass to count no. of contexts for each custom field
+				Map<String, List<String>> fieldToContextMap = new HashMap<>();
+				for (File extractedFile : extractedList) {
+					ChecklistForJiraData data = null;
+					try (FileInputStream in = new FileInputStream(extractedFile)) {
+						data = reader.readValue(in);
+					} catch (Exception ex) {
+						Log.error(LOGGER, "Error processing " + extractedFile.toString() + ", file ignored", ex);
+						continue;
+					}
+					if (data.isManifest()) {
+						String customFieldId = String.valueOf(data.getFieldConfig().getCustomFieldId());
+						String contextId = String.valueOf(data.getFieldConfig().getId());
+						if (!fieldToContextMap.containsKey(customFieldId)) {
+							fieldToContextMap.put(customFieldId, new ArrayList<>());
+						}
+						fieldToContextMap.get(customFieldId).add(contextId);
+					}				
+				}
+				// Second pass to record template content and usage
 				for (File extractedFile : extractedList) {
 					// Extract and convert templates
 					ChecklistForJiraData data = null;
@@ -340,7 +376,9 @@ public class ChecklistForJira {
 						String customFieldName = data.getFieldConfig().getCustomFieldName();
 						String contextId = String.valueOf(data.getFieldConfig().getId());
 						String contextName = data.getFieldConfig().getName();
-						String templateName = customFieldName + " (" + contextId + ") " + contextName ;
+						int contextCount = fieldToContextMap.get(customFieldId).size();
+						String templateName = getTemplateName(
+								customFieldName, contextCount, contextId);
 						List<ChecklistItem> checklistItems = data.getGlobalItems();
 						// Convert checklistItems to new format
 						String newChecklist = ChecklistItem.convert(checklistItems);
@@ -373,8 +411,8 @@ public class ChecklistForJira {
 							for (Project p : cf.getProjectList()) {
 								projectList.add(p.getProjectKey());
 								usage.printRecord(
-									"All",
 									p.getProjectKey(),
+									true, 
 									issueTypes.toString(), 
 									customFieldName,
 									contextName,
@@ -393,11 +431,11 @@ public class ChecklistForJira {
 								projectList.add(p);
 								usage.printRecord(
 										p,
-										"N/A",
+										false,
 										issueTypes.toString(), 
 										customFieldName,
 										contextName,
-										templateName,
+										templateName, 
 										(newChecklist.length() == 0)
 										);
 								Log.info(LOGGER, 
