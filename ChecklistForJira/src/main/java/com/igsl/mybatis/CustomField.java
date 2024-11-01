@@ -11,6 +11,7 @@ public class CustomField {
 	private String fieldName;
 	private String fieldType;
 	private List<Project> projectList;
+	private List<IssueType> issueTypeList;
 	@JsonIgnore
 	public Map<String, Project> getProjectMap() {
 		return projectList.stream().collect(Collectors.toMap(Project::getProjectId, item -> item));
@@ -38,5 +39,11 @@ public class CustomField {
 	}
 	public void setFieldType(String fieldType) {
 		this.fieldType = fieldType;
+	}
+	public List<IssueType> getIssueTypeList() {
+		return issueTypeList;
+	}
+	public void setIssueTypeList(List<IssueType> issueTypeList) {
+		this.issueTypeList = issueTypeList;
 	}
 }

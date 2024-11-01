@@ -8,11 +8,17 @@
         <result column="projectname" property="projectName"/>
     </resultMap>
 
+    <resultMap id="IssueType" type="com.igsl.mybatis.IssueType">
+        <id column="issuetypeid" property="issueTypeId"/>
+        <result column="issuetypename" property="issueTypeName"/>
+    </resultMap>
+
     <resultMap id="CustomField" type="com.igsl.mybatis.CustomField">
         <id column="cfid" property="fieldId"/>
         <result column="cfname" property="fieldName"/>
         <result column="cftype" property="fieldType"/>
         <collection property="projectList" resultMap="Project"/>
+        <collection property="issueTypeList" resultMap="IssueType"/>
     </resultMap>
 
     <!-- 

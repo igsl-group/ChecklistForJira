@@ -65,6 +65,7 @@ import com.igsl.json.ChecklistForJiraData;
 import com.igsl.json.ChecklistItem;
 import com.igsl.mybatis.CustomField;
 import com.igsl.mybatis.DataMapper;
+import com.igsl.mybatis.IssueType;
 import com.igsl.mybatis.Project;
 
 /**
@@ -397,17 +398,21 @@ public class ChecklistForJira {
 						Log.info(LOGGER, "Template [" + templateName + "] processed");
 						// Record usage
 						StringBuilder issueTypes = new StringBuilder();
-						for (String issueTypeName : data.getFieldConfig().getIssueTypes().values()) {
-							issueTypes.append("\n").append(issueTypeName);
-						}
-						if (issueTypes.length() != 0) {
-							issueTypes.delete(0, 1);
-						} else if (issueTypes.length() == 0) {
-							issueTypes.append("All");
-						}
-						// If data (context) specifies 0 projects, 
-						// use project list from field map (screen/workflow) instead
+						// If data (context) specifies 0 projects
+						// use data from field map (screen/workflow) instead
 						if (data.getFieldConfig().getProjects().size() == 0) {
+							for (IssueType it : cf.getIssueTypeList()) {
+								if (IssueType.ALL_ISSUE_TYPES_ID.equals(it.getIssueTypeId())) {
+									issueTypes = new StringBuilder("\n").append(IssueType.ALL_ISSUE_TYPE_NAME);
+									break;
+								}
+								issueTypes.append("\n").append(it.getIssueTypeName());
+							}
+							if (issueTypes.length() != 0) {
+								issueTypes.delete(0, 1);
+							} else if (issueTypes.length() == 0) {
+								issueTypes.append(IssueType.ALL_ISSUE_TYPE_NAME);
+							}
 							for (Project p : cf.getProjectList()) {
 								projectList.add(p.getProjectKey());
 								usage.printRecord(
@@ -427,6 +432,14 @@ public class ChecklistForJira {
 									"Template [" + templateName + "] is associated with " + 
 									cf.getProjectList().size() + " project(s)");
 						} else {
+							for (String issueTypeName : data.getFieldConfig().getIssueTypes().values()) {
+								issueTypes.append("\n").append(issueTypeName);
+							}
+							if (issueTypes.length() != 0) {
+								issueTypes.delete(0, 1);
+							} else if (issueTypes.length() == 0) {
+								issueTypes.append(IssueType.ALL_ISSUE_TYPE_NAME);
+							}
 							for (String p : data.getFieldConfig().getProjects().values()) {
 								projectList.add(p);
 								usage.printRecord(
