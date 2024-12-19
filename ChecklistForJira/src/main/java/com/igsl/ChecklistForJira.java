@@ -85,7 +85,7 @@ public class ChecklistForJira {
 			.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
 	
 	private static final int BUFFER_SIZE = 10240;	
-	private static final int MAX_COL_SIZE = 32767;	// Max col data size in a cell supported by Excel
+	private static final int MAX_COL_SIZE = 20000;	// Huge text is not supported well by Excel
 	private static final int MAX_TEMPLATE_NAME_LENGTH = 50;	// Max Checklist for Jira template name length
 	
 	public static SqlSessionFactory setupMyBatis(Config conf) throws Exception {
@@ -307,12 +307,12 @@ public class ChecklistForJira {
 		CSVFormat fmtProject = CSV.getCSVWriteFormat(Arrays.asList(
 					"Project Key"
 				));
+		CSVPrinter template = null;
 		try {
 			Files.createDirectory(extractDir);
 			try (	FileWriter fwProject = new FileWriter(csvProject.toFile());
 					CSVPrinter project = new CSVPrinter(fwProject, fmtProject);					
 					FileWriter fwTemplate = new FileWriter(csvTemplate.toFile());
-					CSVPrinter template = new CSVPrinter(fwTemplate, fmtTemplate);
 					FileWriter fwUsage = new FileWriter(csvUsage.toFile()); 
 					CSVPrinter usage = new CSVPrinter(fwUsage, fmtUsage)) {
 				// Projects that uses Checklist for Jira
@@ -344,6 +344,7 @@ public class ChecklistForJira {
 				File[] extractedList = extractDir.toFile().listFiles();
 				// First pass to count no. of contexts for each custom field
 				Map<String, List<String>> fieldToContextMap = new HashMap<>();
+				int maxAdditionalTemplateCol = 0;
 				for (File extractedFile : extractedList) {
 					ChecklistForJiraData data = null;
 					try (FileInputStream in = new FileInputStream(extractedFile)) {
@@ -359,8 +360,23 @@ public class ChecklistForJira {
 							fieldToContextMap.put(customFieldId, new ArrayList<>());
 						}
 						fieldToContextMap.get(customFieldId).add(contextId);
+						// Also count max. no. of additional columns for template content
+						List<ChecklistItem> checklistItems = data.getGlobalItems();
+						// Convert checklistItems to new format
+						String newChecklist = ChecklistItem.convert(checklistItems);
+						List<String> templateCols = splitChecklistTemplate(newChecklist);
+						maxAdditionalTemplateCol = Math.max(maxAdditionalTemplateCol, templateCols.size() - 1);
 					}				
 				}
+				// Create template CSVPrinter
+				List<String> templateColumnNames = new ArrayList<>();
+				templateColumnNames.add("Template Name");
+				templateColumnNames.add("Template Content");
+				for (int i = 0; i < maxAdditionalTemplateCol; i++) {
+					templateColumnNames.add("Template Content Con't #" + (i + 1));
+				}
+				fmtTemplate = CSV.getCSVWriteFormat(templateColumnNames);
+				template = new CSVPrinter(fwTemplate, fmtTemplate);
 				// Second pass to record template content and usage
 				for (File extractedFile : extractedList) {
 					// Extract and convert templates
@@ -467,6 +483,9 @@ public class ChecklistForJira {
 				}				
 			} // Try file outputs
 		} finally {
+			if (template != null) {
+				template.close();
+			}
 			FileUtils.deleteDirectory(extractDir.toFile());
 		}
 		Log.info(LOGGER, "Checklist for Jira templates written to: " + csvTemplate.toString());
