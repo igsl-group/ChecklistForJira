@@ -91,4 +91,15 @@ Modify config.json:
                 1. Select issue types according to the Issue Type(s) column.  
                 1. Click Save.
             1. Note that you may encounter multiple rows for the same field. You can determine if the row is dummy by comparing project/issue type. This is caused by custom field context being applied to too many projects/issue types in Jira Data Center/Server. 
+    1. Import data
+        1. Install Checklist for Jira Enterprise. This can be installed at the same time with other versions of Checklist for Jira. 
+        1. Gear | Apps.
+        1. Click Manage apps in the left menu. 
+        1. Scroll down left menu to locate “CHECKLIST FOR JIRA | ENTERPRISE”. 
+        1. Click Import. 
+        1. Click Checklist for Jira Server/DC. 
+        1. Upload .gz files exported in Export Checklist for Jira Data in Jira Server. 
+        1. Click Start import. 
+        1. Wait for import to complete. Press F5 to reload the page to see status updates. It may take a few hours. 
+        1. Note: the import process is known to get stuck if uploaded .gz files exceed a certain size. Contact HeroCoders support to have them fix it if the import got stuck.
             
