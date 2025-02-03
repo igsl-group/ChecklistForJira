@@ -1,6 +1,7 @@
 package com.igsl.json;
 
 import java.util.List;
+import java.util.Map;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
@@ -11,6 +12,8 @@ public class ChecklistForJiraData {
 	private List<ChecklistItem> globalItems;
 	private FieldConfig fieldConfig;
 	private String type;
+	private Map<String, String> issueTypes;
+	private Map<String, String> projects;
 	@JsonIgnore
 	public boolean isManifest() {
 		return "manifest".equals(type);
@@ -32,5 +35,17 @@ public class ChecklistForJiraData {
 	}
 	public void setGlobalItems(List<ChecklistItem> globalItems) {
 		this.globalItems = globalItems;
+	}
+	public Map<String, String> getIssueTypes() {
+		return issueTypes;
+	}
+	public void setIssueTypes(Map<String, String> issueTypes) {
+		this.issueTypes = issueTypes;
+	}
+	public Map<String, String> getProjects() {
+		return projects;
+	}
+	public void setProjects(Map<String, String> projects) {
+		this.projects = projects;
 	}
 }

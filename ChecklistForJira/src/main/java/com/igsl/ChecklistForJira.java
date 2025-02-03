@@ -366,7 +366,7 @@ public class ChecklistForJira {
 						String newChecklist = ChecklistItem.convert(checklistItems);
 						List<String> templateCols = splitChecklistTemplate(newChecklist);
 						maxAdditionalTemplateCol = Math.max(maxAdditionalTemplateCol, templateCols.size() - 1);
-					}				
+					}
 				}
 				// Create template CSVPrinter
 				List<String> templateColumnNames = new ArrayList<>();
@@ -414,10 +414,11 @@ public class ChecklistForJira {
 						Log.info(LOGGER, "Template [" + templateName + "] processed");
 						// Record usage
 						StringBuilder issueTypes = new StringBuilder();
-						// If data (context) specifies 0 projects
-						// use data from field map (screen/workflow) instead
-						if (data.getFieldConfig().getProjects().size() == 0) {
-							for (IssueType it : cf.getIssueTypeList()) {
+						// Do not trust GZ, use field data
+						issueTypes = new StringBuilder();
+						for (Project p : cf.getProjectList()) {
+							projectList.add(p.getProjectKey());
+							for (IssueType it : p.getIssueTypeList()) {
 								if (IssueType.ALL_ISSUE_TYPES_ID.equals(it.getIssueTypeId())) {
 									issueTypes = new StringBuilder("\n").append(IssueType.ALL_ISSUE_TYPE_NAME);
 									break;
@@ -429,25 +430,23 @@ public class ChecklistForJira {
 							} else if (issueTypes.length() == 0) {
 								issueTypes.append(IssueType.ALL_ISSUE_TYPE_NAME);
 							}
-							for (Project p : cf.getProjectList()) {
-								projectList.add(p.getProjectKey());
-								usage.printRecord(
-									p.getProjectKey(),
-									true, 
-									issueTypes.toString(), 
-									customFieldName,
-									contextName,
-									templateName,
-									(newChecklist.length() == 0)
-									);
-								Log.info(LOGGER, 
-										"Template [" + templateName + "] is associated with " + 
-										p.getProjectKey());
-							}
+							usage.printRecord(
+								p.getProjectKey(),
+								true, 
+								issueTypes.toString(), 
+								customFieldName,
+								contextName,
+								templateName,
+								(newChecklist.length() == 0)
+								);
 							Log.info(LOGGER, 
-									"Template [" + templateName + "] is associated with " + 
-									cf.getProjectList().size() + " project(s)");
-						} else {
+									"Template [" + templateName + "] is associated via workflow/screens with " + 
+									p.getProjectKey() + " issue types [" + issueTypes.toString() + "]");
+						}
+						Log.info(LOGGER, 
+								"Template [" + templateName + "] is associated with " + 
+								cf.getProjectList().size() + " project(s)");
+						/* Using GZ project/issue type data
 							for (String issueTypeName : data.getFieldConfig().getIssueTypes().values()) {
 								issueTypes.append("\n").append(issueTypeName);
 							}
@@ -468,13 +467,13 @@ public class ChecklistForJira {
 										(newChecklist.length() == 0)
 										);
 								Log.info(LOGGER, 
-										"Template [" + templateName + "] is associated with " + 
-										p);
+										"Template [" + templateName + "] is associated via context with " + 
+										p + " issue types [" + issueTypes.toString() + "]");
 							}
 							Log.info(LOGGER, 
 									"Template [" + templateName + "] is associated with " + 
 									data.getFieldConfig().getProjects().values().size() + " project(s)");
-						}
+						*/
 					}	// If manifest
 				} // For all extracted files
 				// Write project list

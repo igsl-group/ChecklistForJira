@@ -1,12 +1,14 @@
 package com.igsl.mybatis;
 
 import java.util.Comparator;
+import java.util.List;
 
 public class Project implements Comparable<Project> {
 	private static final Comparator<String> STRING_COMPARATOR = Comparator.nullsFirst(Comparator.naturalOrder());
 	private String projectId;
 	private String projectKey;
 	private String projectName;
+	private List<IssueType> issueTypeList;
 	@Override
 	public int compareTo(Project o) {
 		if (o != null) {
@@ -31,5 +33,11 @@ public class Project implements Comparable<Project> {
 	}
 	public void setProjectName(String projectName) {
 		this.projectName = projectName;
+	}
+	public List<IssueType> getIssueTypeList() {
+		return issueTypeList;
+	}
+	public void setIssueTypeList(List<IssueType> issueTypeList) {
+		this.issueTypeList = issueTypeList;
 	}
 }

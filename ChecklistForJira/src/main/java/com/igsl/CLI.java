@@ -14,7 +14,6 @@ public class CLI {
 	
 	// Enum so we can use switch on Option
 	public static enum CLIOptions {
-		CONFIG(null),
 		EXPORT_FIELD(EXPORT_FIELD_OPTION), 
 		TRIGGER_EXPORT(TRIGGER_EXPORT_OPTION),
 		EXPORT_USAGE(EXPORT_USAGE_OPTION);

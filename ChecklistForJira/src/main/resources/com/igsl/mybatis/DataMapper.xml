@@ -6,6 +6,7 @@
         <id column="projectid" property="projectId"/>
         <result column="projectkey" property="projectKey"/>
         <result column="projectname" property="projectName"/>
+        <collection property="issueTypeList" resultMap="IssueType"/>
     </resultMap>
 
     <resultMap id="IssueType" type="com.igsl.mybatis.IssueType">
@@ -18,7 +19,6 @@
         <result column="cfname" property="fieldName"/>
         <result column="cftype" property="fieldType"/>
         <collection property="projectList" resultMap="Project"/>
-        <collection property="issueTypeList" resultMap="IssueType"/>
     </resultMap>
 
     <!-- 
