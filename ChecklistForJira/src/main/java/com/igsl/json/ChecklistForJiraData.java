@@ -14,6 +14,7 @@ public class ChecklistForJiraData {
 	private String type;
 	private Map<String, String> issueTypes;
 	private Map<String, String> projects;
+	private long issueCount;
 	@JsonIgnore
 	public boolean isManifest() {
 		return "manifest".equals(type);
@@ -47,5 +48,11 @@ public class ChecklistForJiraData {
 	}
 	public void setProjects(Map<String, String> projects) {
 		this.projects = projects;
+	}
+	public long getIssueCount() {
+		return issueCount;
+	}
+	public void setIssueCount(long issueCount) {
+		this.issueCount = issueCount;
 	}
 }

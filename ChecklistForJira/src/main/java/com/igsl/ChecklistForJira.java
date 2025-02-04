@@ -7,21 +7,24 @@ import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.net.URI;
-import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 import java.util.zip.GZIPInputStream;
 
@@ -32,8 +35,6 @@ import org.apache.commons.csv.CSVPrinter;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.http.NameValuePair;
-import org.apache.http.client.utils.URIBuilder;
 import org.apache.ibatis.datasource.pooled.PooledDataSource;
 import org.apache.ibatis.logging.log4j2.Log4j2Impl;
 import org.apache.ibatis.mapping.Environment;
@@ -45,13 +46,6 @@ import org.apache.ibatis.transaction.TransactionFactory;
 import org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.htmlunit.HttpMethod;
-import org.htmlunit.WebClient;
-import org.htmlunit.WebRequest;
-import org.htmlunit.html.DomElement;
-import org.htmlunit.html.HtmlElement;
-import org.htmlunit.html.HtmlForm;
-import org.htmlunit.html.HtmlPage;
 import org.postgresql.Driver;
 
 import com.fasterxml.jackson.core.JsonParser.Feature;
@@ -113,131 +107,7 @@ public class ChecklistForJira {
 		return new SqlSessionFactoryBuilder().build(configuration);
 	}
 	
-	private static URL createURI(Config conf, String path) throws Exception {
-		return new URI(conf.getSourceScheme() + "://" + conf.getSourceHost() + path).toURL();
-	}
-	
-	private static void loginJira(Config conf, WebClient client) throws Exception {
-		// Login
-		HtmlPage loginPage = client.getPage(createURI(conf, "/login.jsp").toString());
-		for (HtmlForm form : loginPage.getForms()) {
-			if ("login-form".equals(form.getId())) {
-				HtmlElement user = (HtmlElement) form.getFirstByXPath("//input[@id='login-form-username']");
-				HtmlElement password = (HtmlElement) form.getFirstByXPath("//input[@id='login-form-password']");
-				HtmlElement button = (HtmlElement) form.getFirstByXPath("//input[@id='login-form-submit']");
-				if (user != null && password != null && button != null) {
-					user.type(conf.getSourceUser());
-					password.type(conf.getSourcePassword());
-					final HtmlPage landingPage = button.click();
-					if (landingPage.getUrl().toString().contains("/secure/")) {
-						Log.info(LOGGER, "Login successful");
-						HtmlElement logoutLink = (HtmlElement) landingPage.getFirstByXPath("//a[@id='log_out']");
-						String atlToken = null;
-						URIBuilder builder = new URIBuilder(logoutLink.getAttribute("href"));
-						for (NameValuePair query : builder.getQueryParams()) {
-							if (query.getName().equals("atl_token")) {
-								atlToken = query.getValue();
-								break;
-							}
-						}
-						// Admin login by adding a form
-						DomElement adminButton = landingPage.createElement("button");
-						adminButton.setAttribute("type", "submit");
-						DomElement atl_token = landingPage.createElement("input");
-						atl_token.setAttribute("name", "atl_token");
-						atl_token.setAttribute("value", atlToken);
-						DomElement webSudoIsPost = landingPage.createElement("input");
-						webSudoIsPost.setAttribute("name", "webSudoIsPost");
-						webSudoIsPost.setAttribute("value", "false");
-						DomElement webSudoDestination = landingPage.createElement("input");
-						webSudoDestination.setAttribute("name", "webSudoDestination");
-						webSudoDestination.setAttribute("value", "/secure/admin/ViewIssueTypes.jspa");
-						DomElement webSudoPassword = landingPage.createElement("input");
-						webSudoPassword.setAttribute("name", "webSudoPassword");
-						webSudoPassword.setAttribute("value", conf.getSourcePassword());
-						DomElement adminForm = landingPage.createElement("form");
-						adminForm.setAttribute("method", "POST");
-						adminForm.setAttribute("action", "/secure/admin/WebSudoAuthenticate.jspa");
-						adminForm.appendChild(adminButton);
-						adminForm.appendChild(atl_token);
-						adminForm.appendChild(webSudoIsPost);
-						adminForm.appendChild(webSudoDestination);
-						adminForm.appendChild(webSudoPassword);
-						// submit the form
-						HtmlPage adminPage = adminButton.click();
-						HtmlElement issueTypeHeader = (HtmlElement) adminPage.getFirstByXPath(
-								"//div[@class='aui-page-header-main']/h2[normalize-space() = 'Issue types']");
-						if (issueTypeHeader == null) {
-							throw new Exception("Admin login failed");
-						}
-						Log.info(LOGGER, "Admin login successful");	
-					} else {
-						throw new Exception("Login failed, login form does not work");
-					}
-				} else {
-					Log.error(LOGGER, "Login form fields not found");
-				}
-				break;
-			}	
-		}	// Form check
-	}
-	
-	private static void triggerExport(Config conf, Collection<CustomField> fields) throws Exception {
-		try (final WebClient webClient = new WebClient()) {
-			webClient.getOptions().setThrowExceptionOnFailingStatusCode(false);
-			webClient.getOptions().setThrowExceptionOnScriptError(false);
-			// Login
-			loginJira(conf, webClient);
-			// Go to custom field page
-			List<String> expectedFiles = new ArrayList<>();
-			for (CustomField cf : fields) {
-				HtmlPage customFieldPage = webClient.getPage(createURI(conf, 
-						"/secure/admin/ConfigureCustomField!default.jspa?customFieldId=" + cf.getFieldId()).toString());
-				// For all custom field contexts links
-				for (Object linkElement : customFieldPage.getByXPath(
-						"//a[contains(@class, 'config')]")) {
-					HtmlElement link = (HtmlElement) linkElement;
-					String href = link.getAttribute("href");
-					URIBuilder builder = new URIBuilder(href);
-					String fieldConfigSchemeId = null;
-					String atlToken = null;
-					for (NameValuePair query : builder.getQueryParams()) {
-						if ("fieldConfigSchemeId".equals(query.getName())) {
-							fieldConfigSchemeId = query.getValue();
-							continue;
-						}
-						if ("atl_token".equals(query.getName())) {
-							atlToken = query.getValue();
-							continue;
-						}
-					}
-					if (atlToken != null && fieldConfigSchemeId != null) {
-						// Trigger export
-						WebRequest triggerExport = new WebRequest(
-								  createURI(conf, "/secure/admin/ExportChecklist!Export.jspa"), HttpMethod.POST);
-						triggerExport.setRequestParameters(new ArrayList<org.htmlunit.util.NameValuePair>());
-						triggerExport.getRequestParameters().add(
-								new org.htmlunit.util.NameValuePair("atl_token", atlToken));
-						triggerExport.getRequestParameters().add(
-								new org.htmlunit.util.NameValuePair("fieldConfigId", fieldConfigSchemeId));
-						webClient.getPage(triggerExport);
-						Log.info(LOGGER, "Export triggered for: " + 
-								"Custom field: [" + cf.getFieldName() + "] (" + cf.getFieldId() + ") " + 
-								"Context: " + fieldConfigSchemeId);
-						expectedFiles.add("customfield_" + cf.getFieldId() + "-" + fieldConfigSchemeId + "-[#].gz");
-					}
-				}	// For all links
-			}	// For all fields
-			Log.info(LOGGER, "Please wait until export is complete.");
-			Log.info(LOGGER, ".gz files will generated in [Jira's data folder]/export/checklist.");
-			Log.info(LOGGER, "You should see the following file(s): ");
-			for (String s : expectedFiles) {
-				Log.info(LOGGER, s);
-			}
-			Log.info(LOGGER, "There should be at least " + expectedFiles.size() + " file(s)");
-		} // Try
-	}
-	
+
 	private static List<CustomField> getChecklistFileds(Config conf) throws Exception {
 		List<CustomField> result = new ArrayList<>();
 		SqlSessionFactory factory = setupMyBatis(conf);
@@ -275,6 +145,24 @@ public class ChecklistForJira {
 			result = StringUtils.left(customFieldName, MAX_TEMPLATE_NAME_LENGTH);
 		}
 		return result;
+	}
+	
+	public static Path gunzip(Path extractDir, Path gzFile) throws Exception {
+		String baseName = FilenameUtils.removeExtension(gzFile.toFile().getName());
+		Path out = extractDir.resolve(baseName);
+		try (	GZIPInputStream gin = new GZIPInputStream(new FileInputStream(gzFile.toFile()));
+				BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(out.toFile())); 
+				) {
+			byte[] buffer = new byte[BUFFER_SIZE];
+			int size = -1;
+			do {
+				size = gin.read(buffer);
+				if (size > 0) {
+					bos.write(buffer, 0, size);
+				}
+			} while (size != -1);
+		}
+		return out;
 	}
 	
 	private static void exportUsage(
@@ -322,19 +210,8 @@ public class ChecklistForJira {
 					return name.toLowerCase().endsWith(".gz");
 				});
 				for (File gzFile : gzList) {
-					String baseName = FilenameUtils.removeExtension(gzFile.getName());
-					Path out = extractDir.resolve(baseName);
-					try (	GZIPInputStream gin = new GZIPInputStream(new FileInputStream(gzFile));
-							BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(out.toFile())); 
-							) {
-						byte[] buffer = new byte[BUFFER_SIZE];
-						int size = -1;
-						do {
-							size = gin.read(buffer);
-							if (size > 0) {
-								bos.write(buffer, 0, size);
-							}
-						} while (size != -1);
+					try {
+						gunzip(extractDir, gzFile.toPath());
 					} catch (Exception e) {
 						Log.error(LOGGER, "Error processing " + gzFile.toString() + ", file ignored", e);
 					}
@@ -524,6 +401,74 @@ public class ChecklistForJira {
 		Log.info(LOGGER, "Reading configuration file: [" + p.toAbsolutePath() + "]");
 		try (FileReader fr = new FileReader(p.toFile())) {
 			return reader.readValue(fr);
+		}
+	}
+	
+	private static void triggerExport(Config conf, List<CustomField> fieldList) {
+		ExportResult result = new ExportResult();
+		ExecutorService service = Executors.newFixedThreadPool(conf.getConcurrentExportCount());
+		List<Future<ExportResult>> futureList = new ArrayList<>();
+		for (CustomField field : fieldList) {
+			futureList.add(service.submit(new ExportThread(
+					conf, Paths.get(conf.getChecklistForJiraExportDir()), field, conf.getExportMaxWaitMS())));
+		}
+		while (!futureList.isEmpty()) {
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException iex) {
+				Log.error(LOGGER, "Sleep interrupted", iex);
+			}
+			List<Future<ExportResult>> toRemove = new ArrayList<>();
+			for (Future<ExportResult> future : futureList) {
+				try {
+					ExportResult er = future.get(1000, TimeUnit.MILLISECONDS);
+					result.addAll(er);
+					toRemove.add(future);
+				} catch (TimeoutException tex) {
+					// Ignore and wait
+				} catch (Exception ex) {
+					Log.error(LOGGER, "Thread execution failed", ex);
+					toRemove.add(future);
+				}
+			}
+			futureList.removeAll(toRemove);
+		}
+		service.shutdownNow();
+		// Print result
+		// Verified
+		List<String> verifiedList = result.getResultMap().entrySet().stream().filter(entry -> {
+			return (entry.getValue().size() != 0);
+		}).map(Map.Entry::getKey).collect(Collectors.toList());
+		Log.info(LOGGER, "Verified: ");
+		if (verifiedList.size() != 0) {
+			verifiedList.forEach(item -> {
+				Log.info(LOGGER, "\t" + item);
+			});
+		} else {
+			Log.info(LOGGER, "\t--None--"); 
+		}		
+
+		List<String> unverifiedList = result.getResultMap().entrySet().stream().filter(entry -> {
+			return (entry.getValue().size() == 0);
+		}).map(Map.Entry::getKey).collect(Collectors.toList());
+		Log.info(LOGGER, "Unable to Verify: ");
+		if (unverifiedList.size() != 0) {
+			unverifiedList.forEach(item -> {
+				Log.info(LOGGER, "\t" + item);
+			});
+		} else {
+			Log.info(LOGGER, "\t--None--"); 
+		}
+		List<String> fileList = result.getResultMap().entrySet().stream().filter(entry -> {
+			return (entry.getValue().size() != 0);
+		}).map(Map.Entry::getValue).flatMap(item -> item.stream()).collect(Collectors.toList());
+		Log.info(LOGGER, "Verified files in directory: " + conf.getChecklistForJiraExportDir());
+		if (fileList.size() != 0) {
+			fileList.forEach(item -> {
+				Log.info(LOGGER, "\t" + item);
+			});
+		} else {
+			Log.info(LOGGER, "\t--None--"); 
 		}
 	}
 	

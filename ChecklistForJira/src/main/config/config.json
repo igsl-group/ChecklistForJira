@@ -6,5 +6,9 @@
 	"sourceScheme": "https",
 	"sourceHost": "[IP]:[Port]",
     "sourceUser": "[User]",
-    "sourcePassword": "[Password]"
+    "sourcePassword": "[Password]",
+    
+    "checklistForJiraExportDir": "[Path of Jira Application Data folder]/export/checklist",
+    "concurrentExportCount": 10,
+    "exportMaxWaitMS": 3600000
 }

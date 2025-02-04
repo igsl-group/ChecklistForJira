@@ -3,6 +3,8 @@ package com.igsl;
 
 public class Config {
 	public static final String DEFAULT_SCHEME = "https";
+	public static final int DEFAULT_CONCURRENT_EXPORT_COUNT = 10;
+	public static final long DEFAULT_EXPORT_MAX_WAIT_MS = 3600000;
 	
 	private String sourceDatabaseURL;
 	private String sourceDatabaseUser;
@@ -12,6 +14,10 @@ public class Config {
 	private String sourceHost;
 	private String sourceUser;
 	private String sourcePassword;
+	
+	private String checklistForJiraExportDir;
+	private int concurrentExportCount = DEFAULT_CONCURRENT_EXPORT_COUNT;
+	private long exportMaxWaitMS = DEFAULT_EXPORT_MAX_WAIT_MS;
 	
 	// Generated
 	public String getSourceUser() {
@@ -68,6 +74,30 @@ public class Config {
 
 	public void setSourceHost(String sourceHost) {
 		this.sourceHost = sourceHost;
+	}
+
+	public String getChecklistForJiraExportDir() {
+		return checklistForJiraExportDir;
+	}
+
+	public void setChecklistForJiraExportDir(String checklistForJiraExportDir) {
+		this.checklistForJiraExportDir = checklistForJiraExportDir;
+	}
+
+	public long getExportMaxWaitMS() {
+		return exportMaxWaitMS;
+	}
+
+	public void setExportMaxWaitMS(long exportMaxWaitMS) {
+		this.exportMaxWaitMS = exportMaxWaitMS;
+	}
+
+	public int getConcurrentExportCount() {
+		return concurrentExportCount;
+	}
+
+	public void setConcurrentExportCount(int concurrentExportCount) {
+		this.concurrentExportCount = concurrentExportCount;
 	}
 
 }
