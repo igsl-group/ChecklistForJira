@@ -14,6 +14,7 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -31,7 +32,9 @@ import java.util.zip.GZIPInputStream;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVPrinter;
+import org.apache.commons.csv.CSVRecord;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -404,13 +407,35 @@ public class ChecklistForJira {
 		}
 	}
 	
-	private static void triggerExport(Config conf, List<CustomField> fieldList) {
+	private static Map<String, List<String>> readBypassFile(Path bypassFile) {
+		Map<String, List<String>> result = new HashMap<>();
+		try (	FileReader fr = CSV.getCSVFileReader(bypassFile); 
+				CSVParser p = new CSVParser(fr, CSV.getCSVReadFormat())) {
+			p.forEach(record -> {
+				String customFieldId = record.get(0);
+				String contextId = record.get(1);
+				if (!result.containsKey(customFieldId)) {
+					result.put(customFieldId, new ArrayList<>());
+				}
+				result.get(customFieldId).add(contextId);
+			});
+		} catch (IOException ioex) {
+			Log.error(LOGGER, "Error reading bypass CSV", ioex);
+		}
+		return result;
+	}
+	
+	private static void triggerExport(Config conf, List<CustomField> fieldList, Path bypassFile) {
 		ExportResult result = new ExportResult();
+		Map<String, List<String>> bypassMap = null;
+		if (bypassFile != null) {
+			bypassMap = readBypassFile(bypassFile);
+		}
 		ExecutorService service = Executors.newFixedThreadPool(conf.getConcurrentExportCount());
 		List<Future<ExportResult>> futureList = new ArrayList<>();
 		for (CustomField field : fieldList) {
 			futureList.add(service.submit(new ExportThread(
-					conf, Paths.get(conf.getChecklistForJiraExportDir()), field, conf.getExportMaxWaitMS())));
+					conf, Paths.get(conf.getChecklistForJiraExportDir()), field, conf.getExportMaxWaitMS(), bypassMap)));
 		}
 		while (!futureList.isEmpty()) {
 			try {
@@ -439,6 +464,7 @@ public class ChecklistForJira {
 		List<String> verifiedList = result.getResultMap().entrySet().stream().filter(entry -> {
 			return (entry.getValue().size() != 0);
 		}).map(Map.Entry::getKey).collect(Collectors.toList());
+		verifiedList.sort(Comparator.naturalOrder());
 		Log.info(LOGGER, "Verified: ");
 		if (verifiedList.size() != 0) {
 			verifiedList.forEach(item -> {
@@ -451,6 +477,7 @@ public class ChecklistForJira {
 		List<String> unverifiedList = result.getResultMap().entrySet().stream().filter(entry -> {
 			return (entry.getValue().size() == 0);
 		}).map(Map.Entry::getKey).collect(Collectors.toList());
+		unverifiedList.sort(Comparator.naturalOrder());
 		Log.info(LOGGER, "Unable to Verify: ");
 		if (unverifiedList.size() != 0) {
 			unverifiedList.forEach(item -> {
@@ -462,6 +489,7 @@ public class ChecklistForJira {
 		List<String> fileList = result.getResultMap().entrySet().stream().filter(entry -> {
 			return (entry.getValue().size() != 0);
 		}).map(Map.Entry::getValue).flatMap(item -> item.stream()).collect(Collectors.toList());
+		fileList.sort(Comparator.naturalOrder());
 		Log.info(LOGGER, "Verified files in directory: " + conf.getChecklistForJiraExportDir());
 		if (fileList.size() != 0) {
 			fileList.forEach(item -> {
@@ -485,7 +513,8 @@ public class ChecklistForJira {
 						break;						
 					case TRIGGER_EXPORT: {
 						List<CustomField> fieldList = readFieldList(cmd.getOptionValue(CLI.FIELD_LIST_OPTION));
-						triggerExport(conf, fieldList);
+						String bypassFile = cmd.getOptionValue(CLI.BYPASS_TRIGGER_OPTION);
+						triggerExport(conf, fieldList, Paths.get(bypassFile));
 						break;
 					}
 					case EXPORT_USAGE: {

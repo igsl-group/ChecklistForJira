@@ -16,7 +16,7 @@ public class ExportResult {
 	private Map<String, List<String>> resultMap = new TreeMap<>();
 	
 	public void addItem(CustomField cf, String contextId, String item) {
-		String name = "Field: " + cf.getFieldName() + " ID: customfield_" + cf.getFieldId() + " Context: " + contextId;
+		String name = "Field: " + cf.getFieldName() + " File: customfield_" + cf.getFieldId() + "-" + contextId;
 		if (!resultMap.containsKey(name)) {
 			resultMap.put(name, new ArrayList<>());
 		}

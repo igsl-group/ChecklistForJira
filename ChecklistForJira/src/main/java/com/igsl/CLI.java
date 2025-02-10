@@ -62,15 +62,22 @@ public class CLI {
 			.build();
 
 	public static final Option TRIGGER_EXPORT_OPTION = Option.builder()
-			.desc(	"Trigger Checklist for Jira plugin to export checklist data. ")
+			.desc("Trigger Checklist for Jira plugin to export checklist data. ")
 			.option("t")
 			.longOpt("triggerExport")
 			.required()
 			.build();
+	public static final Option BYPASS_TRIGGER_OPTION = Option.builder()
+			.desc("Bypass export trigger and instead supply a CSV of custom field ID to context ID")
+			.option("b")
+			.longOpt("bypassTrigger")
+			.hasArg()
+			.build();
 	public static final Options TRIGGER_EXPORT_OPTIONS = new Options()
 			.addOption(CONFIG_OPTION)
 			.addOption(TRIGGER_EXPORT_OPTION)
-			.addOption(FIELD_LIST_OPTION);
+			.addOption(FIELD_LIST_OPTION)
+			.addOption(BYPASS_TRIGGER_OPTION);
 
 	public static final Option GZ_DIR_OPTION = Option.builder()
 			.desc("Folder containing .gz files exported using triggerExport. ")

@@ -5,6 +5,7 @@ import java.net.URL;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -41,12 +42,14 @@ public class ExportThread implements Callable<ExportResult> {
 	private long maxWait;
 	private List<String> completed = new ArrayList<>();
 	private List<String> failed = new ArrayList<>();
+	private Map<String, List<String>> bypassMap;
 	
-	public ExportThread(Config conf, Path exportDirectory, CustomField customField, long maxWait) {
+	public ExportThread(Config conf, Path exportDirectory, CustomField customField, long maxWait, Map<String, List<String>> bypassMap) {
 		this.conf = conf;
 		this.exportDirectory = exportDirectory;
 		this.customField = customField;
 		this.maxWait = maxWait;
+		this.bypassMap = bypassMap;
 	}
 		
 	@Override
@@ -162,49 +165,57 @@ public class ExportThread implements Callable<ExportResult> {
 	}
 	
 	private void triggerExport() throws Exception {
-		try (final WebClient webClient = new WebClient()) {
-			webClient.getOptions().setThrowExceptionOnFailingStatusCode(false);
-			webClient.getOptions().setThrowExceptionOnScriptError(false);
-			// Login
-			loginJira(conf, webClient);
-			// Go to custom field page
-			HtmlPage customFieldPage = webClient.getPage(createURI(conf, 
-					"/secure/admin/ConfigureCustomField!default.jspa?customFieldId=" + customField.getFieldId()));
-			// For all custom field contexts links
-			for (Object linkElement : customFieldPage.getByXPath(
-					"//a[contains(@class, 'config')]")) {
-				HtmlElement link = (HtmlElement) linkElement;
-				String href = link.getAttribute("href");
-				URIBuilder builder = new URIBuilder(href);
-				String fieldConfigSchemeId = null;
-				String atlToken = null;
-				for (NameValuePair query : builder.getQueryParams()) {
-					if ("fieldConfigSchemeId".equals(query.getName())) {
-						fieldConfigSchemeId = query.getValue();
-						continue;
+		if (bypassMap != null) {
+			Log.info(LOGGER, "Bypass used instead of triggering export");
+			if (bypassMap.containsKey(customField.getFieldId())) {
+				contextIdList.addAll(bypassMap.get(customField.getFieldId()));
+			}
+		} else {
+			// Trigger via web
+			try (final WebClient webClient = new WebClient()) {
+				webClient.getOptions().setThrowExceptionOnFailingStatusCode(false);
+				webClient.getOptions().setThrowExceptionOnScriptError(false);
+				// Login
+				loginJira(conf, webClient);
+				// Go to custom field page
+				HtmlPage customFieldPage = webClient.getPage(createURI(conf, 
+						"/secure/admin/ConfigureCustomField!default.jspa?customFieldId=" + customField.getFieldId()));
+				// For all custom field contexts links
+				for (Object linkElement : customFieldPage.getByXPath(
+						"//a[contains(@class, 'config')]")) {
+					HtmlElement link = (HtmlElement) linkElement;
+					String href = link.getAttribute("href");
+					URIBuilder builder = new URIBuilder(href);
+					String fieldConfigSchemeId = null;
+					String atlToken = null;
+					for (NameValuePair query : builder.getQueryParams()) {
+						if ("fieldConfigSchemeId".equals(query.getName())) {
+							fieldConfigSchemeId = query.getValue();
+							continue;
+						}
+						if ("atl_token".equals(query.getName())) {
+							atlToken = query.getValue();
+							continue;
+						}
 					}
-					if ("atl_token".equals(query.getName())) {
-						atlToken = query.getValue();
-						continue;
+					if (atlToken != null && fieldConfigSchemeId != null) {
+						// Trigger export
+						WebRequest triggerExport = new WebRequest(
+								  createURI(conf, "/secure/admin/ExportChecklist!Export.jspa"), HttpMethod.POST);
+						triggerExport.setRequestParameters(new ArrayList<org.htmlunit.util.NameValuePair>());
+						triggerExport.getRequestParameters().add(
+								new org.htmlunit.util.NameValuePair("atl_token", atlToken));
+						triggerExport.getRequestParameters().add(
+								new org.htmlunit.util.NameValuePair("fieldConfigId", fieldConfigSchemeId));
+						webClient.getPage(triggerExport);
+						contextIdList.add(fieldConfigSchemeId);
+						Log.info(LOGGER, "Export triggered for: " + 
+								"Custom field: [" + customField.getFieldName() + "] (" + customField.getFieldId() + ") " + 
+								"Context: " + fieldConfigSchemeId);
 					}
-				}
-				if (atlToken != null && fieldConfigSchemeId != null) {
-					// Trigger export
-					WebRequest triggerExport = new WebRequest(
-							  createURI(conf, "/secure/admin/ExportChecklist!Export.jspa"), HttpMethod.POST);
-					triggerExport.setRequestParameters(new ArrayList<org.htmlunit.util.NameValuePair>());
-					triggerExport.getRequestParameters().add(
-							new org.htmlunit.util.NameValuePair("atl_token", atlToken));
-					triggerExport.getRequestParameters().add(
-							new org.htmlunit.util.NameValuePair("fieldConfigId", fieldConfigSchemeId));
-					webClient.getPage(triggerExport);
-					contextIdList.add(fieldConfigSchemeId);
-					Log.info(LOGGER, "Export triggered for: " + 
-							"Custom field: [" + customField.getFieldName() + "] (" + customField.getFieldId() + ") " + 
-							"Context: " + fieldConfigSchemeId);
-				}
-			}	// For all links
-		} // Try
+				}	// For all links
+			} // Try
+		}
 	}
 
 	public List<String> getCompleted() {

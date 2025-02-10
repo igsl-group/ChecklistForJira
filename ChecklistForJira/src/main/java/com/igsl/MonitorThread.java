@@ -7,9 +7,12 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
@@ -45,12 +48,14 @@ public class MonitorThread implements Callable<ExportResult> {
 	@Override
 	public ExportResult call() {
 		Log.info(LOGGER, "Verification started for " + getName());
+		Pattern gzFileNamePattern = Pattern.compile("customfield_" + customField.getFieldId() + "-" + contextId + "-([0-9])\\.gz");
 		ExportResult result = new ExportResult();
 		Path extractDir = Paths.get(getName());
 		boolean completed = false;
+		int lastProcessedIndex = 0;
 		boolean manifestFound = false;
 		long issueCount = 0;
-		boolean valueFound = false;
+		long valueCount = 0;
 		List<String> filesFound = new ArrayList<>();
 		try {
 			extractDir = Files.createDirectory(extractDir);
@@ -58,16 +63,40 @@ public class MonitorThread implements Callable<ExportResult> {
 			long wait = 0;
 			while (true) {
 				if (wait > maxWait) {
+					Log.error(LOGGER, "Timeout waiting for GZ files");
 					break;
 				}
 				// Find GZ files
-				File[] fileList = exportDirectory.toFile().listFiles((dir, name) -> 
-					name.toLowerCase().startsWith("customfield_" + customField.getFieldId() + "-" + contextId + "-") && 
-					name.toLowerCase().endsWith(".gz"));
+				File[] fileList = exportDirectory.toFile().listFiles((dir, name) -> {
+					// Extract index
+					Matcher m = gzFileNamePattern.matcher(name);
+					return m.matches();
+				});
+				
+				// Sort fileList
+				Arrays.sort(fileList);
+				
 				// Parse content
+				StringBuilder fileListString  = new StringBuilder();
+				for (File f : fileList) {
+					fileListString.append(f.getName()).append("\n");
+				}
+				Log.debug(LOGGER, "File list: " + fileListString.toString());
+				
 				if (fileList != null) {
 					for (File gzFile : fileList) {
+						Log.debug(LOGGER, "Processing file: " + gzFile.getName());
 						try {
+							Matcher m = gzFileNamePattern.matcher(gzFile.getName());
+							if (!m.matches()) {
+								Log.debug(LOGGER, "Pattern not matched");
+								continue;
+							}
+							int currentIndex = Integer.parseInt(m.group(1));
+							Log.debug(LOGGER, "Current index: " + currentIndex);
+							if (currentIndex <= lastProcessedIndex) {
+								continue;
+							}
 							Path file = ChecklistForJira.gunzip(extractDir, gzFile.toPath());
 							ChecklistForJiraData data = reader.readValue(file.toFile());
 							filesFound.add(FilenameUtils.getName(gzFile.toString()));
@@ -75,25 +104,43 @@ public class MonitorThread implements Callable<ExportResult> {
 							case "manifest": 
 								manifestFound = true;
 								issueCount = data.getIssueCount();
+								Log.debug(LOGGER, "Manifest issue count: " + issueCount);
+								lastProcessedIndex = currentIndex;
 								break;
 							case "values": 
-								valueFound = true;
+								valueCount += data.getValues().size();
+								Log.debug(LOGGER, "Values size: " + data.getValues().size());
+								lastProcessedIndex = currentIndex;
 								break;
 							default: 
+								lastProcessedIndex = currentIndex;
 								break;
 							}
 							// If manifest type, get issue count
 							// If issue count not 0, look for value type
 						} catch (Exception ex) {
-							Log.error(LOGGER, "Error processing " + gzFile, ex);
+							Log.warn(LOGGER, "Error processing " + gzFile, ex);
 						}
 					}
 				}
-				if (manifestFound && (issueCount == 0 || valueFound)) {
+				
+				StringBuilder sb = new StringBuilder();
+				sb.append("Custom field: ").append(customField.getFieldId()).append("\n");
+				sb.append("Context: ").append(contextId).append("\n");
+				sb.append("manifestFound: ").append(manifestFound).append("\n");
+				sb.append("issueCount: ").append(issueCount).append("\n");
+				sb.append("valueCount: ").append(valueCount).append("\n");
+				sb.append("lastProcessedIndex: ").append(lastProcessedIndex).append("\n");
+				
+				Log.debug(LOGGER, sb.toString());
+				
+				if (manifestFound && (issueCount == 0 || valueCount >= issueCount)) {
 					// Completed
 					completed = true;
+					Log.debug(LOGGER, "Completion detected");
 					break;
 				} else {
+					wait += WAIT;
 					try {
 						Thread.sleep(WAIT);
 					} catch (InterruptedException iex) {
@@ -122,7 +169,7 @@ public class MonitorThread implements Callable<ExportResult> {
 	}
 
 	public String getName() {
-		return customField.getFieldName() + " (customfield_" + customField.getFieldId() + ") - " + contextId;
+		return "customfield_" + customField.getFieldId() + "-" + contextId;
 	}
 	
 }
