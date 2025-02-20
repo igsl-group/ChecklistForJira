@@ -9,6 +9,6 @@
     "sourcePassword": "[Password]",
     
     "checklistForJiraExportDir": "[Path of Jira Application Data folder]/export/checklist",
-    "concurrentExportCount": 10,
+    "concurrentExportCount": 20,
     "exportMaxWaitMS": 3600000
 }
