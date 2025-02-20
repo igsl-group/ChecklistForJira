@@ -9,17 +9,20 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  * Checklist for Jira export format
  */
 public class ChecklistForJiraData {
+	public static final String TYPE_TEMPLATE = "templates";
+	public static final String TYPE_MANIFEST = "manifest";
+	public static final String TYPE_VALUES = "values";
+	
 	private List<ChecklistItem> globalItems;
+	private List<ChecklistItem> defaultLocalItems;
 	private FieldConfig fieldConfig;
 	private String type;
 	private Map<String, String> issueTypes;
 	private Map<String, String> projects;
 	private long issueCount;
 	private List<Object> values;
-	@JsonIgnore
-	public boolean isManifest() {
-		return "manifest".equals(type);
-	}
+	private int count;
+	private List<ChecklistTemplate> templates;
 	public FieldConfig getFieldConfig() {
 		return fieldConfig;
 	}
@@ -61,5 +64,23 @@ public class ChecklistForJiraData {
 	}
 	public void setValues(List<Object> values) {
 		this.values = values;
+	}
+	public List<ChecklistItem> getDefaultLocalItems() {
+		return defaultLocalItems;
+	}
+	public void setDefaultLocalItems(List<ChecklistItem> defaultLocalItems) {
+		this.defaultLocalItems = defaultLocalItems;
+	}
+	public List<ChecklistTemplate> getTemplates() {
+		return templates;
+	}
+	public void setTemplates(List<ChecklistTemplate> templates) {
+		this.templates = templates;
+	}
+	public int getCount() {
+		return count;
+	}
+	public void setCount(int count) {
+		this.count = count;
 	}
 }

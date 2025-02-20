@@ -1,19 +1,25 @@
 package com.igsl;
 
 import java.io.BufferedOutputStream;
-import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.StringReader;
+import java.net.URLDecoder;
+import java.nio.charset.Charset;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
@@ -26,18 +32,24 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.zip.GZIPInputStream;
+
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.xpath.XPath;
+import javax.xml.xpath.XPathConstants;
+import javax.xml.xpath.XPathFactory;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVPrinter;
-import org.apache.commons.csv.CSVRecord;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.ibatis.datasource.pooled.PooledDataSource;
 import org.apache.ibatis.logging.log4j2.Log4j2Impl;
 import org.apache.ibatis.mapping.Environment;
@@ -50,9 +62,14 @@ import org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.postgresql.Driver;
+import org.w3c.dom.Document;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
 
 import com.fasterxml.jackson.core.JsonParser.Feature;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.MappingIterator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
@@ -60,10 +77,13 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.igsl.CLI.CLIOptions;
 import com.igsl.json.ChecklistForJiraData;
 import com.igsl.json.ChecklistItem;
+import com.igsl.json.ChecklistTemplate;
 import com.igsl.mybatis.CustomField;
 import com.igsl.mybatis.DataMapper;
 import com.igsl.mybatis.IssueType;
 import com.igsl.mybatis.Project;
+import com.igsl.mybatis.Workflow;
+import com.igsl.postfunction.ChecklistFunction;
 
 /**
  * Replacement for ChecklistForJira.ps1.
@@ -136,17 +156,47 @@ public class ChecklistForJira {
 		return result;
 	}
 	
-	private static String getTemplateName(String customFieldName, int contextCount, String contextId) {
-		String result;
-		if (contextCount > 1) {
-			result = StringUtils.left(
-						customFieldName, 
-						MAX_TEMPLATE_NAME_LENGTH - 1 - contextId.length()) + 
-					":" + contextId;
-		} else {
-			// Use custom field name
-			result = StringUtils.left(customFieldName, MAX_TEMPLATE_NAME_LENGTH);
+	private static String getManifestTemplateName(String customFieldName, String contextId) {
+		// Context name is most of the time too long
+		// So just use context Id instead
+		return customFieldName + "-" + contextId;
+	}
+	
+	private static String getWorkflowTemplateName(
+			Map<String, CustomField> fieldMap, 
+			List<String> customFieldIds, 
+			String transitionName, 
+			String functionName) {
+		StringBuilder customFieldNames = new StringBuilder();
+		for (String id : customFieldIds) {
+			if (fieldMap.containsKey(id)) {
+				customFieldNames.append(",").append(fieldMap.get(id).getFieldName());
+			} else {
+				customFieldNames.append(",").append(id);
+			}
 		}
+		if (customFieldNames.length() != 0) {
+			customFieldNames.delete(0, 1);
+		}
+		return customFieldNames + "-" + transitionName + "-" + functionName;
+	}
+	
+	private static String getTruncatedTemplateName(String fullName, Set<String> nameList) {
+		if (fullName.length() > MAX_TEMPLATE_NAME_LENGTH) {
+			fullName = fullName.substring(0, MAX_TEMPLATE_NAME_LENGTH);
+		}
+		String result = fullName;
+		int count = 0;
+		while (nameList.contains(result)) {
+			count++;
+			String suffix = String.format("-%02d", Integer.toString(count));
+			if (result.length() + suffix.length() > MAX_TEMPLATE_NAME_LENGTH) {
+				result = fullName.substring(0, result.length() - suffix.length()) + suffix;
+			} else {
+				result = result + suffix;
+			}
+		}
+		nameList.add(result);
 		return result;
 	}
 	
@@ -168,6 +218,102 @@ public class ChecklistForJira {
 		return out;
 	}
 	
+	private static List<ChecklistFunction> parseWorkflowChecklistPostFunctions(String workflowName, String source) throws Exception {
+		List<ChecklistFunction> result = new ArrayList<>();
+		final String XPATH_CHECKLISTFORJIRA = "//post-functions/function[arg[@name='class.name'][text()='com.okapya.jira.customfields.workflow.functions.ChecklistFunction']]";
+		final String XPATH_PARENT_TRANSITION = "./ancestor::action";
+		XPathFactory xpathFact = XPathFactory.newInstance();
+        XPath xpath = xpathFact.newXPath();
+        DocumentBuilderFactory docFactory = DocumentBuilderFactory.newInstance();
+        docFactory.setValidating(false);
+        docFactory.setNamespaceAware(true);
+        docFactory.setFeature("http://xml.org/sax/features/namespaces", false);
+        docFactory.setFeature("http://xml.org/sax/features/validation", false);
+        docFactory.setFeature("http://apache.org/xml/features/nonvalidating/load-dtd-grammar", false);
+        docFactory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        DocumentBuilder docBuilder = docFactory.newDocumentBuilder();
+        Document doc = docBuilder.parse(new InputSource(new StringReader(source)));
+        // Locate Checklist for Jira post-functions
+        NodeList postFunctions = (NodeList) xpath.evaluate(XPATH_CHECKLISTFORJIRA, doc, XPathConstants.NODESET);
+        if (postFunctions != null && postFunctions.getLength() != 0) {
+        	for (int i = 0; i < postFunctions.getLength(); i++) {
+        		Node postFunction = postFunctions.item(i);
+        		Node transition = (Node) xpath.evaluate(XPATH_PARENT_TRANSITION, postFunction, XPathConstants.NODE);
+        		ChecklistFunction func = new ChecklistFunction(workflowName, postFunction, transition);
+        		result.add(func);
+        	}
+        }
+        return result;
+	}
+	
+	private static void recordTemplateFromGZ(
+			CSVPrinter printer, 
+			String source,
+			Set<String> templateNameList,
+			String fieldName, 
+			String contextName,
+			String templateFullName,
+			String templateContent) throws IOException {
+		List<String> data = new ArrayList<>();
+		data.addAll(Arrays.asList(
+				source,
+				"N/A", "N/A", "N/A", "N/A", "N/A",
+				fieldName, 
+				contextName, 
+				templateFullName,
+				getTruncatedTemplateName(templateFullName, templateNameList)));
+		data.addAll(splitChecklistTemplate(templateContent));		
+		printer.printRecord(data);
+	}
+
+	private static void recordTemplateFromWorkflow(
+			CSVPrinter printer, 
+			Set<String> templateNameList,
+			String workflowName,
+			String transitionName,
+			String transitionId,
+			boolean initialTransition,
+			boolean append,
+			String fieldName, 
+			String contextName,
+			String templateFullName,
+			String templateContent) throws IOException {
+		List<String> data = new ArrayList<>();
+		data.addAll(Arrays.asList(
+				"Workflow",
+				workflowName, 
+				transitionName, 
+				transitionId,
+				Boolean.toString(initialTransition),
+				Boolean.toString(append),
+				fieldName,
+				contextName,
+				templateFullName,
+				getTruncatedTemplateName(templateFullName, templateNameList)));
+		data.addAll(splitChecklistTemplate(templateContent));
+		printer.printRecord(data);
+	}
+
+	private static void recordTemplateUsage(
+			CSVPrinter printer, 
+			String source, 
+			String projectKey,
+			String issueTypes,
+			String customFieldName,
+			String contextName,
+			String templateFullName,
+			String templateEmpty) throws IOException {
+		List<String> data = Arrays.asList(
+				source, 
+				projectKey,
+				issueTypes,
+				customFieldName,
+				contextName,
+				templateFullName,
+				templateEmpty);
+		printer.printRecord(data);
+	}
+	
 	private static void exportUsage(
 			Config conf, 
 			List<CustomField> fieldList, 
@@ -176,199 +322,314 @@ public class ChecklistForJira {
 				Collectors.toMap(CustomField::getFieldId, item -> item));
 		// Output to CSV
 		Date now = new Date();
-		Log.info(LOGGER, "Reading GZ from [" + folder + "]");
 		Path gzDir = Paths.get(folder);
 		Path extractDir = Paths.get("GZ." + SDF.format(now));
 		Path csvProject = Paths.get("ChecklistProject." + SDF.format(now) + ".csv"); 
 		Path csvTemplate = Paths.get("ChecklistTemplate." + SDF.format(now) + ".csv"); 
 		Path csvUsage = Paths.get("ChecklistUsage." + SDF.format(now) + ".csv"); 
 		CSVFormat fmtTemplate = CSV.getCSVWriteFormat(Arrays.asList(
-					"Template Name",
+					"Template Source",
+					"Workflow Name",
+					"Transition Name",
+					"Transition ID",
+					"Initial Transition",
+					"Append",
+					"Field Name",
+					"Context Name",
+					"Template Full Name",
+					"Template Truncated Name",
 					"Template Content"
 				));
 		CSVFormat fmtUsage = CSV.getCSVWriteFormat(Arrays.asList(
+					"Source",
 					"Project Key",
-					"Context Applied to All Projects",
 					"Issue Type(s)",
 					"Field Name",
 					"Context Name", 
-					"Template Name",
+					"Template Full Name",
 					"Template Empty"
 				));
 		CSVFormat fmtProject = CSV.getCSVWriteFormat(Arrays.asList(
 					"Project Key"
 				));
-		CSVPrinter template = null;
 		try {
 			Files.createDirectory(extractDir);
 			try (	FileWriter fwProject = new FileWriter(csvProject.toFile());
 					CSVPrinter project = new CSVPrinter(fwProject, fmtProject);					
 					FileWriter fwTemplate = new FileWriter(csvTemplate.toFile());
+					CSVPrinter template = new CSVPrinter(fwTemplate, fmtTemplate);
 					FileWriter fwUsage = new FileWriter(csvUsage.toFile()); 
 					CSVPrinter usage = new CSVPrinter(fwUsage, fmtUsage)) {
+
 				// Projects that uses Checklist for Jira
 				Set<String> projectList = new HashSet<>();
-				// Unzip GZ files
-				File[] gzList = gzDir.toFile().listFiles((dir, name) -> {
-					return name.toLowerCase().endsWith(".gz");
+				Set<String> templateNameList = new HashSet<>();
+
+				// Read workflows
+				Log.info(LOGGER, "Processing workflows");
+				ObjectReader checklistItemReader = OM.readerFor(ChecklistItem.class);
+				SqlSessionFactory factory = setupMyBatis(conf);
+				try (SqlSession session = factory.openSession()) {
+					// Get filter info from source
+					DataMapper mapper = session.getMapper(DataMapper.class);
+					List<Workflow> workflows = mapper.getWorkflows();
+					for (Workflow workflow : workflows) {
+						Log.info(LOGGER, "Processing workflow [" + workflow.getWorkflowName() + "]");
+						List<ChecklistFunction> functions = parseWorkflowChecklistPostFunctions(workflow.getWorkflowName(), workflow.getDescriptor());
+						for (ChecklistFunction function : functions) {
+							// Convert template
+							List<ChecklistItem> items = new ArrayList<>();
+							for (String itemString : function.getItems()) {
+								// URL decode
+								String s = URLDecoder.decode(itemString, Charset.defaultCharset());
+								// Parse as JSON
+								ChecklistItem item = checklistItemReader.readValue(s);
+								items.add(item);
+							}
+							if (items.size() != 0) {
+								Log.info(LOGGER, 
+										"Workflow [" + workflow.getWorkflowName() + "] " + 
+										"Transition [" + function.getTransitionName() + " (" + function.getTransitionId() + ")] contains checklist template");
+								// Record template
+								String convertedChecklist = ChecklistItem.convert(items);
+								Log.debug(LOGGER, 
+										"Workflow [" + workflow.getWorkflowName() + "] " + 
+										"Transition [" + function.getTransitionName() + " (" + function.getTransitionId() + ")] contains checklist template [" + 
+										convertedChecklist + "]");
+								String templateFullName = getWorkflowTemplateName(
+											fieldMap, 
+											function.getSelectedCustomFieldIdList(),
+											function.getTransitionName(),
+											function.getFunctionName());
+								recordTemplateFromWorkflow(
+										template, 
+										templateNameList, 
+										workflow.getWorkflowName(), 
+										function.getTransitionName(),
+										function.getTransitionId(),
+										function.isInitialTransition(),
+										function.isAppendOperation(),
+										function.getSelectedCustomFieldIdNames(fieldMap),
+										"N/A",
+										templateFullName,
+										convertedChecklist);
+								// Record usage
+								Log.info(LOGGER, "Associated projects: " + workflow.getProjectList().size());
+								for (Project p : workflow.getProjectList()) {
+									projectList.add(p.getProjectKey());
+									for (String fieldId : function.getSelectedCustomFieldIdList()) {
+										String fieldName = fieldId;
+										if (fieldMap.containsKey(fieldId)) {
+											fieldName = fieldMap.get(fieldId).getFieldName();
+										}
+										Log.debug(LOGGER, 
+												"Workflow [" + workflow.getWorkflowName() + "] " + 
+												"Transition [" + function.getTransitionName() + " (" + function.getTransitionId() + ")] " + 
+												"Associated with project [" + p.getProjectKey() + "] " + 
+												"Issue types [" + p.getIssueTypeString() + "] " + 
+												"Field [" + fieldName + "] " + 
+												"Template Name [" + templateFullName + "]");
+										recordTemplateUsage(
+												usage, 
+												"Workflow",
+												p.getProjectKey(),
+												p.getIssueTypeString(),
+												fieldName,
+												"N/A",
+												templateFullName,
+												Boolean.toString(convertedChecklist.length() == 0));
+									}
+								}
+							} else {
+								Log.info(LOGGER, "Workflow [" + workflow.getWorkflowName() + "] contains no checklist templates");
+							}
+						} // For each post-function
+					} // For each workflow
+				} // SqlSession resource
+				
+				Log.info(LOGGER, "Processing GZ from [" + folder + "]");
+				// Group the files in gzDir by fieldId-context
+				Map<String, Map<String, List<Path>>> map = new HashMap<>();
+				DirectoryStream<Path> gzDirStream = Files.newDirectoryStream(gzDir, "*.gz");
+				Pattern gzPattern = Pattern.compile("customfield_([0-9]+)-([0-9]+)-([0-9]+)\\.gz");
+				gzDirStream.forEach(p -> {
+					Matcher m = gzPattern.matcher(p.getFileName().toString());
+					if (m.matches()) {
+						String fieldId = m.group(1);
+						String contextId = m.group(2);
+						if (!map.containsKey(fieldId)) {
+							map.put(fieldId, new HashMap<>());
+						}
+						Map<String, List<Path>> submap = map.get(fieldId);
+						if (!submap.containsKey(contextId)) {
+							submap.put(contextId, new ArrayList<>());
+						}
+						submap.get(contextId).add(p);
+					}
 				});
-				for (File gzFile : gzList) {
-					try {
-						gunzip(extractDir, gzFile.toPath());
-					} catch (Exception e) {
-						Log.error(LOGGER, "Error processing " + gzFile.toString() + ", file ignored", e);
-					}
-				}
-				// Process all files
+				
 				ObjectReader reader = OM.readerFor(ChecklistForJiraData.class);
-				File[] extractedList = extractDir.toFile().listFiles();
-				// First pass to count no. of contexts for each custom field
-				Map<String, List<String>> fieldToContextMap = new HashMap<>();
-				int maxAdditionalTemplateCol = 0;
-				for (File extractedFile : extractedList) {
-					ChecklistForJiraData data = null;
-					try (FileInputStream in = new FileInputStream(extractedFile)) {
-						data = reader.readValue(in);
-					} catch (Exception ex) {
-						Log.error(LOGGER, "Error processing " + extractedFile.toString() + ", file ignored", ex);
-						continue;
-					}
-					if (data.isManifest()) {
-						String customFieldId = String.valueOf(data.getFieldConfig().getCustomFieldId());
-						String contextId = String.valueOf(data.getFieldConfig().getId());
-						if (!fieldToContextMap.containsKey(customFieldId)) {
-							fieldToContextMap.put(customFieldId, new ArrayList<>());
-						}
-						fieldToContextMap.get(customFieldId).add(contextId);
-						// Also count max. no. of additional columns for template content
-						List<ChecklistItem> checklistItems = data.getGlobalItems();
-						// Convert checklistItems to new format
-						String newChecklist = ChecklistItem.convert(checklistItems);
-						List<String> templateCols = splitChecklistTemplate(newChecklist);
-						maxAdditionalTemplateCol = Math.max(maxAdditionalTemplateCol, templateCols.size() - 1);
-					}
-				}
-				// Create template CSVPrinter
-				List<String> templateColumnNames = new ArrayList<>();
-				templateColumnNames.add("Template Name");
-				templateColumnNames.add("Template Content");
-				for (int i = 0; i < maxAdditionalTemplateCol; i++) {
-					templateColumnNames.add("Template Content Con't #" + (i + 1));
-				}
-				fmtTemplate = CSV.getCSVWriteFormat(templateColumnNames);
-				template = new CSVPrinter(fwTemplate, fmtTemplate);
-				// Second pass to record template content and usage
-				for (File extractedFile : extractedList) {
-					// Extract and convert templates
-					ChecklistForJiraData data = null;
-					try (FileInputStream in = new FileInputStream(extractedFile)) {
-						data = reader.readValue(in);
-					} catch (Exception ex) {
-						Log.error(LOGGER, "Error processing " + extractedFile.toString() + ", file ignored", ex);
-						continue;
-					}
-					if (data.isManifest()) {
-						Log.info(LOGGER, "Processing manifest [" + extractedFile + "]");
-						String customFieldId = String.valueOf(data.getFieldConfig().getCustomFieldId());
-						String customFieldName = data.getFieldConfig().getCustomFieldName();
-						String contextId = String.valueOf(data.getFieldConfig().getId());
-						String contextName = data.getFieldConfig().getName();
-						int contextCount = fieldToContextMap.get(customFieldId).size();
-						String templateName = getTemplateName(
-								customFieldName, contextCount, contextId);
-						List<ChecklistItem> checklistItems = data.getGlobalItems();
-						// Convert checklistItems to new format
-						String newChecklist = ChecklistItem.convert(checklistItems);
-						// Find accurate mapping from template to projects
-						if (!fieldMap.containsKey(customFieldId)) {
-							// Custom field not found, sound alarm
-							Log.error(LOGGER, 
-									"Checklist field " + customFieldName + " (" + customFieldId + ") not found");
-							continue;
-						}
-						CustomField cf = fieldMap.get(customFieldId);
-						// Output template content
-						List<String> templateCols = splitChecklistTemplate(newChecklist);
-						templateCols.add(0, templateName);
-						template.printRecord((Object[]) templateCols.toArray(new String[0]));
-						Log.info(LOGGER, "Template [" + templateName + "] processed");
-						// Record usage
-						StringBuilder issueTypes = new StringBuilder();
-						// Do not trust GZ, use field data
-						issueTypes = new StringBuilder();
-						for (Project p : cf.getProjectList()) {
-							projectList.add(p.getProjectKey());
-							for (IssueType it : p.getIssueTypeList()) {
-								if (IssueType.ALL_ISSUE_TYPES_ID.equals(it.getIssueTypeId())) {
-									issueTypes = new StringBuilder("\n").append(IssueType.ALL_ISSUE_TYPE_NAME);
+				// For each field
+				for (Map.Entry<String, Map<String, List<Path>>> customFieldEntry : map.entrySet()) {
+					String customFieldId = customFieldEntry.getKey();
+					String customFieldName = fieldMap.get(customFieldId).getFieldName();
+					for (Map.Entry<String, List<Path>> contextEntry : customFieldEntry.getValue().entrySet()) {
+						// Handle manifest and template types
+						String contextId = "";
+						String contextName = "";
+						for (Path file : contextEntry.getValue()) {
+							Log.info(LOGGER, "Processing GZip file [" + file + "]");
+							Path extractedFile = gunzip(extractDir, file);
+							ChecklistForJiraData data = null;
+							try (FileInputStream in = new FileInputStream(extractedFile.toFile())) {
+								Log.info(LOGGER, "Processing extracted file [" + extractedFile + "]");
+								data = reader.readValue(in);
+								switch(data.getType()) {
+								case ChecklistForJiraData.TYPE_MANIFEST:
+									Log.info(LOGGER, "Processing manifest [" + extractedFile + "]");
+									//String customFieldId = String.valueOf(data.getFieldConfig().getCustomFieldId());
+									//String customFieldName = data.getFieldConfig().getCustomFieldName();
+									contextId = String.valueOf(data.getFieldConfig().getId());
+									contextName = data.getFieldConfig().getName();
+									String fullName = getManifestTemplateName(customFieldName, contextId);
+									List<ChecklistItem> checklistItems = new ArrayList<>();
+									// Global items
+									if (data.getGlobalItems() != null) {
+										checklistItems.addAll(data.getGlobalItems());
+									}
+									// Default local items
+									if (data.getDefaultLocalItems() != null) {
+										checklistItems.addAll(data.getDefaultLocalItems());
+									}
+									// Convert checklistItems to new format
+									String convertedChecklist = ChecklistItem.convert(checklistItems);
+									// Find accurate mapping from template to projects
+									if (!fieldMap.containsKey(customFieldId)) {
+										// Custom field not found, sound alarm
+										Log.error(LOGGER, 
+												"Checklist field " + customFieldName + " (" + customFieldId + ") not found, manifest ignored");
+										break;
+									}
+									recordTemplateFromGZ(
+											template, 
+											"Manifest", 
+											templateNameList, 
+											customFieldName, 
+											contextName,
+											fullName, 
+											convertedChecklist);
+									Log.info(LOGGER, "Template [" + fullName + "] processed");
+									// Record usage using GZ data
+									StringBuilder issueTypes = new StringBuilder();
+									for (String issueType : data.getFieldConfig().getIssueTypes().values()) {
+										issueTypes.append("\n").append(issueType);
+									}
+									if (issueTypes.length() != 0) {
+										issueTypes.delete(0, 1);
+									} else if (issueTypes.length() == 0) {
+										issueTypes.append(IssueType.ALL_ISSUE_TYPE_NAME);
+									}
+									for (String projectKey : data.getFieldConfig().getProjects().values()) {
+										projectList.add(projectKey);
+										Log.debug(LOGGER, 
+												"Checklist template [" + fullName + "] " + 
+												"Associated with project [" + projectKey + "] " + 
+												"Issue types [" + issueTypes.toString() + "] " + 
+												"Custom field [" + customFieldName + "] ");
+										recordTemplateUsage(
+												usage, 
+												"GZip", 
+												projectKey, 
+												issueTypes.toString(), 
+												customFieldName, 
+												contextName, 
+												fullName, 
+												Boolean.toString(convertedChecklist.length() == 0));
+									}
+									Log.info(LOGGER, 
+											"Template [" + fullName + "] is associated via GZ with " + 
+											data.getFieldConfig().getProjects().values().size() + " project(s)");
+									break;
+								case ChecklistForJiraData.TYPE_TEMPLATE: 
+									Log.info(LOGGER, "Processing templates [" + extractedFile + "]");
+									// Templates as new checklists with no usage
+									if (data.getTemplates() != null) {
+										for (ChecklistTemplate definedTemplate : data.getTemplates()) {
+											String convertedDefinedChecklist = ChecklistItem.convert(definedTemplate.getItems());
+											Log.info(LOGGER, "Template [" + definedTemplate.getName() + "] found");
+											recordTemplateFromGZ(
+													template, 
+													"Templates", 
+													templateNameList, 
+													customFieldName,
+													contextName,
+													definedTemplate.getName(), 
+													convertedDefinedChecklist);
+										}
+									}
+									break;
+								default:
+									Log.warn(LOGGER, "Type: [" + data.getType() + "] in [" + extractedFile + "] ignored");
 									break;
 								}
-								issueTypes.append("\n").append(it.getIssueTypeName());
+							} catch (Exception ex) {
+								Log.error(LOGGER, "Error processing " + extractedFile + ", file ignored", ex);
 							}
-							if (issueTypes.length() != 0) {
-								issueTypes.delete(0, 1);
-							} else if (issueTypes.length() == 0) {
-								issueTypes.append(IssueType.ALL_ISSUE_TYPE_NAME);
-							}
-							usage.printRecord(
-								p.getProjectKey(),
-								true, 
-								issueTypes.toString(), 
-								customFieldName,
-								contextName,
-								templateName,
-								(newChecklist.length() == 0)
-								);
-							Log.info(LOGGER, 
-									"Template [" + templateName + "] is associated via workflow/screens with " + 
-									p.getProjectKey() + " issue types [" + issueTypes.toString() + "]");
-						}
+						}	// For each file
+					}	// For context
+					// Record usage using field data
+					CustomField cf = fieldMap.get(customFieldId);
+					String fullName = customFieldName;
+					for (Project p : cf.getProjectList()) {
+						projectList.add(p.getProjectKey());
+						recordTemplateUsage(
+								usage, 
+								"Custom Field", 
+								p.getProjectKey(), 
+								p.getIssueTypeString(),
+								cf.getFieldName(), 
+								"N/A", 
+								"N/A", 
+								"N/A");
 						Log.info(LOGGER, 
-								"Template [" + templateName + "] is associated with " + 
-								cf.getProjectList().size() + " project(s)");
-						/* Using GZ project/issue type data
-							for (String issueTypeName : data.getFieldConfig().getIssueTypes().values()) {
-								issueTypes.append("\n").append(issueTypeName);
-							}
-							if (issueTypes.length() != 0) {
-								issueTypes.delete(0, 1);
-							} else if (issueTypes.length() == 0) {
-								issueTypes.append(IssueType.ALL_ISSUE_TYPE_NAME);
-							}
-							for (String p : data.getFieldConfig().getProjects().values()) {
-								projectList.add(p);
-								usage.printRecord(
-										p,
-										false,
-										issueTypes.toString(), 
-										customFieldName,
-										contextName,
-										templateName, 
-										(newChecklist.length() == 0)
-										);
-								Log.info(LOGGER, 
-										"Template [" + templateName + "] is associated via context with " + 
-										p + " issue types [" + issueTypes.toString() + "]");
-							}
-							Log.info(LOGGER, 
-									"Template [" + templateName + "] is associated with " + 
-									data.getFieldConfig().getProjects().values().size() + " project(s)");
-						*/
-					}	// If manifest
-				} // For all extracted files
+								"Template [" + fullName + "] is associated via workflow/screens with " + 
+								p.getProjectKey() + " issue types [" + p.getIssueTypeString() + "]");
+					}
+					Log.info(LOGGER, 
+							"Template [" + fullName + "] is associated via workflow/screen with " + 
+							cf.getProjectList().size() + " project(s)");
+				}	// For each custom field
 				// Write project list
 				for (String pKey : projectList) {
 					project.printRecord(pKey);
 				}				
 			} // Try file outputs
 		} finally {
-			if (template != null) {
-				template.close();
-			}
 			FileUtils.deleteDirectory(extractDir.toFile());
 		}
 		Log.info(LOGGER, "Checklist for Jira templates written to: " + csvTemplate.toString());
 		Log.info(LOGGER, "Template usage written to: " + csvUsage.toString());
+	}
+	
+	private static void exportWorkflows(Config conf) throws Exception {
+		try {
+			Path directory = Paths.get("Workflow." + SDF.format(new Date()));
+			Files.createDirectories(directory);
+			SqlSessionFactory factory = setupMyBatis(conf);
+			try (SqlSession session = factory.openSession()) {
+				DataMapper mapper = session.getMapper(DataMapper.class);
+				List<Workflow> workflows = mapper.getWorkflows();
+				for (Workflow workflow : workflows) {
+					Path file = directory.resolve(workflow.getWorkflowName() + ".xml");
+					try (FileWriter fw = new FileWriter(file.toFile())) {
+						fw.write(workflow.getDescriptor());
+						Log.info(LOGGER, "Workflow " + workflow.getWorkflowName() + " exported to " + file.toString());
+					}
+				}
+			}
+		} catch (IOException ioex) {
+			Log.error(LOGGER, "Failed to create output directory for workflow", ioex);
+		}
 	}
 	
 	private static void exportFieldList(Config conf) {
@@ -426,6 +687,7 @@ public class ChecklistForJira {
 	}
 	
 	private static void triggerExport(Config conf, List<CustomField> fieldList, Path bypassFile) {
+		Instant startTime = Instant.now();
 		ExportResult result = new ExportResult();
 		Map<String, List<String>> bypassMap = null;
 		if (bypassFile != null) {
@@ -459,10 +721,11 @@ public class ChecklistForJira {
 			futureList.removeAll(toRemove);
 		}
 		service.shutdownNow();
+		Instant endTime = Instant.now();
 		// Print result
 		// Verified
 		List<String> verifiedList = result.getResultMap().entrySet().stream().filter(entry -> {
-			return (entry.getValue().size() != 0);
+			return (entry.getValue().getFiles().size() != 0);
 		}).map(Map.Entry::getKey).collect(Collectors.toList());
 		verifiedList.sort(Comparator.naturalOrder());
 		Log.info(LOGGER, "Verified: ");
@@ -474,21 +737,20 @@ public class ChecklistForJira {
 			Log.info(LOGGER, "\t--None--"); 
 		}		
 
-		List<String> unverifiedList = result.getResultMap().entrySet().stream().filter(entry -> {
-			return (entry.getValue().size() == 0);
-		}).map(Map.Entry::getKey).collect(Collectors.toList());
-		unverifiedList.sort(Comparator.naturalOrder());
+		List<Map.Entry<String, ExportResult.ResultItem>> unverifiedList = result.getResultMap().entrySet().stream().filter(entry -> {
+			return (entry.getValue().getFiles().size() == 0);
+		}).collect(Collectors.toList());
 		Log.info(LOGGER, "Unable to Verify: ");
 		if (unverifiedList.size() != 0) {
 			unverifiedList.forEach(item -> {
-				Log.info(LOGGER, "\t" + item);
+				Log.info(LOGGER, "\t" + item.getKey() + " Error: " + item.getValue().getErrorMessage());
 			});
 		} else {
 			Log.info(LOGGER, "\t--None--"); 
 		}
 		List<String> fileList = result.getResultMap().entrySet().stream().filter(entry -> {
-			return (entry.getValue().size() != 0);
-		}).map(Map.Entry::getValue).flatMap(item -> item.stream()).collect(Collectors.toList());
+			return (entry.getValue().getFiles().size() != 0);
+		}).map(Map.Entry::getValue).flatMap(item -> item.getFiles().stream()).collect(Collectors.toList());
 		fileList.sort(Comparator.naturalOrder());
 		Log.info(LOGGER, "Verified files in directory: " + conf.getChecklistForJiraExportDir());
 		if (fileList.size() != 0) {
@@ -498,6 +760,15 @@ public class ChecklistForJira {
 		} else {
 			Log.info(LOGGER, "\t--None--"); 
 		}
+		Duration elapsed = Duration.between(
+				LocalTime.from(startTime.atZone(ZoneId.systemDefault())), 
+				LocalTime.from(endTime.atZone(ZoneId.systemDefault())));
+		Log.info(LOGGER, "Elapsed: " + 
+				elapsed.toDaysPart() + " day(s) " + 
+				elapsed.toHoursPart() + " hour(s) " + 
+				elapsed.toMinutesPart() + " minute(s) " + 
+				elapsed.toSecondsPart() + " second(s) " + 
+				elapsed.toMillisPart() + " millisecond(s) ");	
 	}
 	
 	public static void main(String[] args) throws Exception {
@@ -508,13 +779,20 @@ public class ChecklistForJira {
 				CLIOptions cli = CLI.CLIOptions.parse(opt);
 				if (cli != null) {
 					switch (cli) {
+					case EXPORT_WORKFLOW:
+						exportWorkflows(conf);
+						break;
 					case EXPORT_FIELD: 
 						exportFieldList(conf);
 						break;						
 					case TRIGGER_EXPORT: {
 						List<CustomField> fieldList = readFieldList(cmd.getOptionValue(CLI.FIELD_LIST_OPTION));
 						String bypassFile = cmd.getOptionValue(CLI.BYPASS_TRIGGER_OPTION);
-						triggerExport(conf, fieldList, Paths.get(bypassFile));
+						Path bypassPath = null;
+						if (bypassFile != null) {
+							bypassPath = Paths.get(bypassFile);
+						}
+						triggerExport(conf, fieldList, bypassPath);
 						break;
 					}
 					case EXPORT_USAGE: {

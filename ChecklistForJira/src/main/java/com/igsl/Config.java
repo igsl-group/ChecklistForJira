@@ -3,7 +3,7 @@ package com.igsl;
 
 public class Config {
 	public static final String DEFAULT_SCHEME = "https";
-	public static final int DEFAULT_CONCURRENT_EXPORT_COUNT = 10;
+	public static final int DEFAULT_CONCURRENT_EXPORT_COUNT = 20;
 	public static final long DEFAULT_EXPORT_MAX_WAIT_MS = 3600000;
 	
 	private String sourceDatabaseURL;

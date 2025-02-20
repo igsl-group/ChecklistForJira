@@ -16,6 +16,23 @@ public class Project implements Comparable<Project> {
 		}
 		return 0;
 	}
+	public String getIssueTypeString() {
+		StringBuilder result = new StringBuilder();
+		for (IssueType it : issueTypeList) {
+			if (IssueType.ALL_ISSUE_TYPES_ID.equals(it.getIssueTypeId())) {
+				result = new StringBuilder();
+				break;
+			} 
+			result.append("\n").append(it.getIssueTypeName());
+		}
+		if (result.length() != 0) {
+			result.delete(0, 1);
+		} else {
+			result.append(IssueType.UNASSIGNED_ISSUE_TYPE_NAME);
+		}
+		return result.toString();
+	}
+	
 	public String getProjectId() {
 		return projectId;
 	}

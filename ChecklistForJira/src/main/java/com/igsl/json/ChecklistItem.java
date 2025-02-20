@@ -4,6 +4,8 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 /**
 	{
         "id": 2,
@@ -22,35 +24,42 @@ import java.util.regex.Pattern;
 public class ChecklistItem {
 	private static final String STATUS_NONE = "none";
 	private static final String STATUS_OPEN = "open";
+	private static final String STATUS_NA = "notApplicable";
 	private static final Pattern NAME_PATTERN = Pattern.compile("(.+)\n>>\n(.+)");
 	private int id;
 	private String name;
 	private boolean mandatory;
 	private String statusId;
+	@JsonProperty("isHeader")
 	private boolean isHeader;
 	private boolean checked;
 	private boolean disabled;
 	public static String convert(List<ChecklistItem> items) {
 		StringBuilder result = new StringBuilder();
-		for (ChecklistItem item : items) {
-			if (!item.isDisabled()) {
-				result.append("\n");
-				if (item.isHeader()) {
-					result.append("--- ").append(item.getName());
-				} else {
-					if (item.isMandatory()) {
-						result.append("* ");
-					}
-					if (item.getStatusId() == null || STATUS_NONE.equals(item.getStatusId())) {
-						result.append("[").append(STATUS_OPEN).append("] ");
+		if (items != null) {
+			for (ChecklistItem item : items) {
+				if (!item.isDisabled()) {
+					result.append("\n");
+					if (item.isHeader()) {
+						result.append("--- ").append(item.getName());
 					} else {
-						result.append("[").append(item.getStatusId()).append("] ");
-					}
-					Matcher matcher = NAME_PATTERN.matcher(item.getName());
-					if (matcher.matches()) {
-						result.append(matcher.group(1)).append("\n>>").append(matcher.group(2));
-					} else {
-						result.append(item.getName());
+						if (item.isMandatory()) {
+							result.append("* ");
+						}
+						if (item.isChecked()) {
+							result.append("[x] ");
+						}
+						if (item.getStatusId() == null || STATUS_NA.equals(item.getStatusId()) || STATUS_NONE.equals(item.getStatusId())) {
+							result.append("[").append(STATUS_OPEN).append("] ");
+						} else {
+							result.append("[").append(item.getStatusId()).append("] ");
+						}
+						Matcher matcher = NAME_PATTERN.matcher(item.getName());
+						if (matcher.matches()) {
+							result.append(matcher.group(1)).append("\n>>").append(matcher.group(2));
+						} else {
+							result.append(item.getName());
+						}
 					}
 				}
 			}
@@ -61,6 +70,19 @@ public class ChecklistItem {
 		}
 		return result.toString();
 	}
+	@Override
+	public String toString() {
+		StringBuilder sb = new StringBuilder();
+		sb	.append("id: [").append(id).append("] ")
+			.append("name: [").append(name).append("] ")
+			.append("mandatory: [").append(mandatory).append("] ")
+			.append("statusId: [").append(statusId).append("] ")
+			.append("isHeader: [").append(isHeader).append("] ")
+			.append("checked: [").append(checked).append("] ")
+			.append("disabled: [").append(disabled).append("] ");
+		return sb.toString();
+	}
+	
 	public String getName() {
 		return name;
 	}

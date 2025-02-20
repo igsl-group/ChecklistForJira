@@ -14,12 +14,18 @@ public class CLI {
 	
 	// Enum so we can use switch on Option
 	public static enum CLIOptions {
-		EXPORT_FIELD(EXPORT_FIELD_OPTION), 
-		TRIGGER_EXPORT(TRIGGER_EXPORT_OPTION),
-		EXPORT_USAGE(EXPORT_USAGE_OPTION);
+		EXPORT_FIELD(EXPORT_FIELD_OPTIONS, EXPORT_FIELD_OPTION), 
+		TRIGGER_EXPORT(TRIGGER_EXPORT_OPTIONS, TRIGGER_EXPORT_OPTION),
+		EXPORT_USAGE(EXPORT_USAGE_OPTIONS, EXPORT_USAGE_OPTION),
+		EXPORT_WORKFLOW(EXPORT_WORKFLOW_OPTIONS, EXPORT_WORKFLOW_OPTION);
+		private Options options;
 		private Option option;
-		CLIOptions(Option option) {
+		CLIOptions(Options options, Option option) {
+			this.options = options;
 			this.option = option;
+		}
+		public Options getOptions() {
+			return this.options;
 		}
 		public Option getOption() {
 			return this.option;
@@ -98,31 +104,35 @@ public class CLI {
 			.addOption(FIELD_LIST_OPTION)
 			.addOption(GZ_DIR_OPTION);
 
+	public static final Option EXPORT_WORKFLOW_OPTION = Option.builder()
+			.desc("Export workflows that may contain Checklist for Jira post-functions.")
+			.option("w")
+			.longOpt("exportWorkflow")
+			.required()
+			.build();
+	
+	public static final Options EXPORT_WORKFLOW_OPTIONS = new Options()
+			.addOption(CONFIG_OPTION)
+			.addOption(EXPORT_WORKFLOW_OPTION);
+	
 	public static void printHelp() {
 		HelpFormatter hf = new HelpFormatter();
-		String command = "java -jar ..\\target\\ChecklistForJira-[version].jar";
+		String command = "java -jar ChecklistForJira-[version].jar";
 		System.out.println(command);
-		hf.printHelp("Export Checklist for Jira custom fields", EXPORT_FIELD_OPTIONS);
-		hf.printHelp("Trigger Checklist for Jira data export", TRIGGER_EXPORT_OPTIONS);
-		hf.printHelp("Export Checklist for Jira templates and usage", EXPORT_USAGE_OPTIONS);
+		hf.printHelp(command, EXPORT_WORKFLOW_OPTIONS, true);
+		hf.printHelp(command, EXPORT_FIELD_OPTIONS, true);
+		hf.printHelp(command, TRIGGER_EXPORT_OPTIONS, true);
+		hf.printHelp(command, EXPORT_USAGE_OPTIONS, true);
 	}
 	
 	public static CommandLine parseCommandLine(String[] args) {
 		CommandLineParser parser = new DefaultParser();
-		try {
-			return parser.parse(EXPORT_FIELD_OPTIONS, args);
-		} catch (Exception ex) {
-			// Ignore
-		}
-		try {
-			return parser.parse(TRIGGER_EXPORT_OPTIONS, args);
-		} catch (Exception ex) {
-			// Ignore
-		}
-		try {
-			return parser.parse(EXPORT_USAGE_OPTIONS, args);
-		} catch (Exception ex) {
-			// Ignore
+		for (CLIOptions cli : CLIOptions.values()) {
+			try {
+				return parser.parse(cli.getOptions(), args);
+			} catch (Exception ex) {
+				// Ignore
+			}
 		}
 		printHelp();
 		return null;

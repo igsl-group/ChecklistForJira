@@ -4,4 +4,5 @@ import java.util.List;
 
 public interface DataMapper {
 	public List<CustomField> getCustomFieldUsage();
+	public List<Workflow> getWorkflows();
 }

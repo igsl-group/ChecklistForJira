@@ -3,6 +3,7 @@ package com.igsl;
 import java.net.URI;
 import java.net.URL;
 import java.nio.file.Path;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -17,9 +18,7 @@ import org.apache.http.NameValuePair;
 import org.apache.http.client.utils.URIBuilder;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.htmlunit.HttpMethod;
 import org.htmlunit.WebClient;
-import org.htmlunit.WebRequest;
 import org.htmlunit.html.DomElement;
 import org.htmlunit.html.HtmlElement;
 import org.htmlunit.html.HtmlForm;
@@ -34,11 +33,11 @@ import com.igsl.mybatis.CustomField;
 public class ExportThread implements Callable<ExportResult> {
 
 	private static final Logger LOGGER = LogManager.getLogger();
-	
+	public static final SimpleDateFormat SDF = new SimpleDateFormat("yyyyMMdd-HHmmss");
+
 	private Config conf;
 	private Path exportDirectory;
 	private CustomField customField;
-	private List<String> contextIdList = new ArrayList<>();
 	private long maxWait;
 	private List<String> completed = new ArrayList<>();
 	private List<String> failed = new ArrayList<>();
@@ -57,15 +56,16 @@ public class ExportThread implements Callable<ExportResult> {
 		Log.info(LOGGER, "Export started for " + customField.getFieldName() + " (" + customField.getFieldId() + ")");
 		ExportResult result = new ExportResult();
 		try {
-			triggerExport();
-			contextIdList.forEach(contextId -> {
-				result.addItem(customField, contextId, null);
-			});
+			List<Callable<ExportResult>> list = triggerExport();
+			if (list.size() == 0) {
+				// No items found
+				return result;
+			}			
 			// Start monitoring threads
-			ExecutorService service = Executors.newFixedThreadPool(contextIdList.size());
+			ExecutorService service = Executors.newFixedThreadPool(list.size());
 			List<Future<ExportResult>> futureList = new ArrayList<>();
-			contextIdList.forEach(contextId -> {
-				futureList.add(service.submit(new MonitorThread(exportDirectory, customField, contextId, maxWait)));
+			list.forEach(thread -> {
+				futureList.add(service.submit(thread));
 			});
 			while (!futureList.isEmpty()) {
 				try {
@@ -95,11 +95,11 @@ public class ExportThread implements Callable<ExportResult> {
 		return result;
 	}
 
-	private static URL createURI(Config conf, String path) throws Exception {
+	public static URL createURI(Config conf, String path) throws Exception {
 		return new URI(conf.getSourceScheme() + "://" + conf.getSourceHost() + path).toURL();
 	}
 	
-	private static void loginJira(Config conf, WebClient client) throws Exception {
+	public static void loginJira(Config conf, WebClient client) throws Exception {
 		// Login
 		HtmlPage loginPage = client.getPage(createURI(conf, "/login.jsp").toString());
 		for (HtmlForm form : loginPage.getForms()) {
@@ -164,11 +164,15 @@ public class ExportThread implements Callable<ExportResult> {
 		}	// Form check
 	}
 	
-	private void triggerExport() throws Exception {
+	private List<Callable<ExportResult>> triggerExport() throws Exception {
+		List<Callable<ExportResult>> result = new ArrayList<>();
 		if (bypassMap != null) {
 			Log.info(LOGGER, "Bypass used instead of triggering export");
 			if (bypassMap.containsKey(customField.getFieldId())) {
-				contextIdList.addAll(bypassMap.get(customField.getFieldId()));
+				List<String> list = bypassMap.get(customField.getFieldId());
+				for (String id : list) {
+					result.add(new FileMonitorThread(exportDirectory, customField, id, maxWait));
+				}
 			}
 		} else {
 			// Trigger via web
@@ -180,42 +184,32 @@ public class ExportThread implements Callable<ExportResult> {
 				// Go to custom field page
 				HtmlPage customFieldPage = webClient.getPage(createURI(conf, 
 						"/secure/admin/ConfigureCustomField!default.jspa?customFieldId=" + customField.getFieldId()));
-				// For all custom field contexts links
-				for (Object linkElement : customFieldPage.getByXPath(
-						"//a[contains(@class, 'config')]")) {
-					HtmlElement link = (HtmlElement) linkElement;
-					String href = link.getAttribute("href");
-					URIBuilder builder = new URIBuilder(href);
-					String fieldConfigSchemeId = null;
-					String atlToken = null;
-					for (NameValuePair query : builder.getQueryParams()) {
-						if ("fieldConfigSchemeId".equals(query.getName())) {
-							fieldConfigSchemeId = query.getValue();
-							continue;
+				// Find all the contexts
+				// Find a.aui-button with content "Export"
+				List<Object> buttonList = customFieldPage.getByXPath("//a[@class='aui-button'][text()[contains(., 'Export')]]");
+				if (buttonList.size() != 0) {
+					for (Object linkElement : buttonList) {
+						HtmlElement link = (HtmlElement) linkElement;
+						// Grab fieldConfigId off the link
+						String href = link.getAttribute("href");
+						URIBuilder builder = new URIBuilder(href);
+						String fieldConfigId = null;
+						for (NameValuePair query : builder.getQueryParams()) {
+							if ("fieldConfigId".equals(query.getName())) {
+								fieldConfigId = query.getValue();
+								break;
+							}
 						}
-						if ("atl_token".equals(query.getName())) {
-							atlToken = query.getValue();
-							continue;
-						}
-					}
-					if (atlToken != null && fieldConfigSchemeId != null) {
-						// Trigger export
-						WebRequest triggerExport = new WebRequest(
-								  createURI(conf, "/secure/admin/ExportChecklist!Export.jspa"), HttpMethod.POST);
-						triggerExport.setRequestParameters(new ArrayList<org.htmlunit.util.NameValuePair>());
-						triggerExport.getRequestParameters().add(
-								new org.htmlunit.util.NameValuePair("atl_token", atlToken));
-						triggerExport.getRequestParameters().add(
-								new org.htmlunit.util.NameValuePair("fieldConfigId", fieldConfigSchemeId));
-						webClient.getPage(triggerExport);
-						contextIdList.add(fieldConfigSchemeId);
-						Log.info(LOGGER, "Export triggered for: " + 
-								"Custom field: [" + customField.getFieldName() + "] (" + customField.getFieldId() + ") " + 
-								"Context: " + fieldConfigSchemeId);
-					}
-				}	// For all links
+						// Click and get export page
+						HtmlPage exportPage = link.click();
+						result.add(new ExportContextThread(conf, customField, fieldConfigId, exportPage.getUrl(), maxWait));
+					}	// For all contexts
+				} else {
+					Log.info(LOGGER, "No exportable context found");
+				}
 			} // Try
 		}
+		return result;
 	}
 
 	public List<String> getCompleted() {

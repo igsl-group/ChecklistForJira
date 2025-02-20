@@ -72,6 +72,7 @@ public class CSV {
 			.setDelimiter(",")
 			.setQuoteMode(QuoteMode.ALL)
 			.setHeader(headers.toArray(new String[0]))
+			.setAllowMissingColumnNames(true)
 			.build();
 	}
 	

@@ -2,6 +2,13 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.igsl.mybatis.DataMapper">
 
+    <resultMap id="Workflow" type="com.igsl.mybatis.Workflow">
+        <id column="ID" property="id"/>
+        <result column="workflowname" property="workflowName"/>
+        <result column="DESCRIPTOR" property="descriptor"/>
+        <collection property="projectList" resultMap="Project"/>
+    </resultMap>
+
     <resultMap id="Project" type="com.igsl.mybatis.Project">
         <id column="projectid" property="projectId"/>
         <result column="projectkey" property="projectKey"/>
@@ -20,6 +27,34 @@
         <result column="cftype" property="fieldType"/>
         <collection property="projectList" resultMap="Project"/>
     </resultMap>
+
+    <!-- Get workflows -->
+    <select id="getWorkflows" resultMap="Workflow">
+        <![CDATA[
+            SELECT 
+                wf.*,
+                it.id AS issuetypeid,
+                it.pname AS issuetypename, 
+                p.id AS projectid,
+                p.pkey AS projectkey,
+                p.pname AS projectname
+            FROM 
+                jiraworkflows wf
+                LEFT JOIN workflowschemeentity wfe 
+                    ON wfe.WORKFLOW = wf.workflowname
+                LEFT JOIN workflowscheme wfs
+                    ON wfs.ID = wfe.SCHEME
+                LEFT JOIN issuetype it 
+                    ON it.ID = wfe.issuetype
+                LEFT JOIN nodeassociation na 
+                    ON na.ASSOCIATION_TYPE = 'ProjectScheme' 
+                    AND na.SINK_NODE_ENTITY = 'WorkflowScheme'
+                    AND na.SINK_NODE_ID = wfs.ID
+                    AND na.SOURCE_NODE_ENTITY = 'Project'
+                LEFT JOIN project p
+                    ON p.ID = na.SOURCE_NODE_ID  
+        ]]>        
+    </select>
 
     <!-- 
         The goal of this SQL is to:
@@ -58,7 +93,7 @@
                         ON naScreen.SINK_NODE_ID = itss.ID AND naScreen.SINK_NODE_ENTITY = 'IssueTypeScreenScheme'
                     LEFT JOIN project p 
                         ON p.ID = naScreen.SOURCE_NODE_ID AND naScreen.SINK_NODE_ENTITY = 'IssueTypeScreenScheme'
-                    WHERE cf.CUSTOMFIELDTYPEKEY LIKE 'com.okapya.jira.checklist:%'
+                    WHERE cf.CUSTOMFIELDTYPEKEY LIKE 'com.okapya.jira.checklist:checklist'
             UNION ALL
                 SELECT
                     cf.ID AS cfid
@@ -84,7 +119,7 @@
                         ON naWorkflow.SINK_NODE_ID = ws.ID AND naWorkflow.SINK_NODE_ENTITY = 'WorkflowScheme'
                     JOIN project p 
                         ON p.ID = naWorkflow.SOURCE_NODE_ID AND naWorkflow.SINK_NODE_ENTITY = 'WorkflowScheme'
-                    WHERE cf.CUSTOMFIELDTYPEKEY LIKE 'com.okapya.jira.checklist:%'
+                    WHERE cf.CUSTOMFIELDTYPEKEY LIKE 'com.okapya.jira.checklist:checklist'
             ) tmp
             ORDER BY
                 tmp.cfname
