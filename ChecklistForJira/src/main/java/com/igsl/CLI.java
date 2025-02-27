@@ -85,6 +85,12 @@ public class CLI {
 			.addOption(FIELD_LIST_OPTION)
 			.addOption(BYPASS_TRIGGER_OPTION);
 
+	public static final Option WF_FILE_OPTION = Option.builder()
+			.desc("File containing workflow information exported using workflowExport. ")
+			.option("w")
+			.longOpt("wf")
+			.hasArg()
+			.build();
 	public static final Option GZ_DIR_OPTION = Option.builder()
 			.desc("Folder containing .gz files exported using triggerExport. ")
 			.option("g")
@@ -102,11 +108,12 @@ public class CLI {
 			.addOption(CONFIG_OPTION)
 			.addOption(EXPORT_USAGE_OPTION)
 			.addOption(FIELD_LIST_OPTION)
-			.addOption(GZ_DIR_OPTION);
+			.addOption(GZ_DIR_OPTION)
+			.addOption(WF_FILE_OPTION);
 
 	public static final Option EXPORT_WORKFLOW_OPTION = Option.builder()
 			.desc("Export workflows that may contain Checklist for Jira post-functions.")
-			.option("w")
+			.option("ew")
 			.longOpt("exportWorkflow")
 			.required()
 			.build();
