@@ -84,6 +84,7 @@ import com.igsl.mybatis.CustomField;
 import com.igsl.mybatis.DataMapper;
 import com.igsl.mybatis.IssueType;
 import com.igsl.mybatis.Project;
+import com.igsl.mybatis.Source;
 import com.igsl.mybatis.Workflow;
 import com.igsl.postfunction.ChecklistFunction;
 
@@ -564,22 +565,34 @@ public class ChecklistForJira {
 									} else if (issueTypes.length() == 0) {
 										issueTypes.append(IssueType.ALL_ISSUE_TYPE_NAME);
 									}
-									for (String projectKey : data.getFieldConfig().getProjects().values()) {
-										projectList.add(projectKey);
-										Log.debug(LOGGER, 
-												"Checklist template [" + fullName + "] " + 
-												"Associated with project [" + projectKey + "] " + 
-												"Issue types [" + issueTypes.toString() + "] " + 
-												"Custom field [" + customFieldName + "] ");
+									if (data.getFieldConfig().getProjects().values().size() == 0) {
 										recordTemplateUsage(
 												usage, 
 												"GZip", 
-												projectKey, 
+												"All", 
 												issueTypes.toString(), 
 												customFieldName, 
 												contextName, 
 												fullName, 
 												Boolean.toString(convertedChecklist.length() == 0));
+									} else {
+										for (String projectKey : data.getFieldConfig().getProjects().values()) {
+											projectList.add(projectKey);
+											Log.debug(LOGGER, 
+													"Checklist template [" + fullName + "] " + 
+													"Associated with project [" + projectKey + "] " + 
+													"Issue types [" + issueTypes.toString() + "] " + 
+													"Custom field [" + customFieldName + "] ");
+											recordTemplateUsage(
+													usage, 
+													"GZip", 
+													projectKey, 
+													issueTypes.toString(), 
+													customFieldName, 
+													contextName, 
+													fullName, 
+													Boolean.toString(convertedChecklist.length() == 0));
+										}
 									}
 									Log.info(LOGGER, 
 											"Template [" + fullName + "] is associated via GZ with " + 
@@ -615,24 +628,28 @@ public class ChecklistForJira {
 					// Record usage using field data
 					CustomField cf = fieldMap.get(customFieldId);
 					String fullName = customFieldName;
-					for (Project p : cf.getProjectList()) {
-						projectList.add(p.getProjectKey());
-						recordTemplateUsage(
-								usage, 
-								"Custom Field", 
-								p.getProjectKey(), 
-								p.getIssueTypeString(),
-								cf.getFieldName(), 
-								"N/A", 
-								"N/A", 
-								"N/A");
-						Log.info(LOGGER, 
-								"Template [" + fullName + "] is associated via workflow/screens with " + 
-								p.getProjectKey() + " issue types [" + p.getIssueTypeString() + "]");
+					Set<String> projectKeySet = new HashSet<>();
+					for (Source source : cf.getSourceList()) {
+						for (Project p : source.getProjectList()) {
+							projectKeySet.add(p.getProjectKey());
+							projectList.add(p.getProjectKey());
+							recordTemplateUsage(
+									usage, 
+									source.getSource(), 
+									p.getProjectKey(), 
+									p.getIssueTypeString(),
+									cf.getFieldName(), 
+									"N/A", 
+									"N/A", 
+									"N/A");
+							Log.info(LOGGER, 
+									"Template [" + fullName + "] is associated via workflow/screens with " + 
+									p.getProjectKey() + " issue types [" + p.getIssueTypeString() + "]");
+						}
 					}
 					Log.info(LOGGER, 
 							"Template [" + fullName + "] is associated via workflow/screen with " + 
-							cf.getProjectList().size() + " project(s)");
+							projectKeySet.size() + " project(s)");
 				}	// For each custom field
 				// Write project list
 				for (String pKey : projectList) {

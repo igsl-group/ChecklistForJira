@@ -38,7 +38,9 @@ public class ChecklistItem {
 		StringBuilder result = new StringBuilder();
 		if (items != null) {
 			for (ChecklistItem item : items) {
-				if (!item.isDisabled()) {
+				// Checklist for Jira export may include some extra blank items
+				// If the name is blank, exclude it
+				if (!item.isDisabled() && !item.getName().isBlank()) {
 					result.append("\n");
 					if (item.isHeader()) {
 						result.append("--- ").append(item.getName());

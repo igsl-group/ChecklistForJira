@@ -20,12 +20,17 @@
         <id column="issuetypeid" property="issueTypeId"/>
         <result column="issuetypename" property="issueTypeName"/>
     </resultMap>
+    
+    <resultMap id="Source" type="com.igsl.mybatis.Source">
+        <id column="source" property="source"/>
+        <collection property="projectList" resultMap="Project"/>
+    </resultMap>
 
     <resultMap id="CustomField" type="com.igsl.mybatis.CustomField">
         <id column="cfid" property="fieldId"/>
         <result column="cfname" property="fieldName"/>
         <result column="cftype" property="fieldType"/>
-        <collection property="projectList" resultMap="Project"/>
+        <collection property="sourceList" resultMap="Source"/>
     </resultMap>
 
     <!-- Get workflows -->
@@ -74,6 +79,7 @@
                     cf.ID AS cfid
                     , cf.cfname AS cfname
                     , cf.CUSTOMFIELDTYPEKEY AS cftype
+                    , 'Screen' AS source
                     , COALESCE(p.pkey, 'Global') AS projectkey
                     , COALESCE(p.id, '0') AS projectid
                     , p.pname AS projectname
@@ -99,6 +105,7 @@
                     cf.ID AS cfid
                     , cf.cfname AS cfname
                     , cf.CUSTOMFIELDTYPEKEY as cftype
+                    , 'Workflow' AS source
                     , COALESCE(p.pkey, 'Global') AS projectkey
                     , COALESCE(p.id, '0') AS projectid
                     , p.pname AS projectname
