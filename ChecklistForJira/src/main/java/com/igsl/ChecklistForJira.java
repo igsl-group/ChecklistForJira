@@ -70,7 +70,6 @@ import org.xml.sax.InputSource;
 import com.fasterxml.jackson.core.JsonParser.Feature;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.MappingIterator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
@@ -80,6 +79,7 @@ import com.igsl.CLI.CLIOptions;
 import com.igsl.json.ChecklistForJiraData;
 import com.igsl.json.ChecklistItem;
 import com.igsl.json.ChecklistTemplate;
+import com.igsl.json.JsonChecklistItem;
 import com.igsl.mybatis.CustomField;
 import com.igsl.mybatis.DataMapper;
 import com.igsl.mybatis.IssueType;
@@ -817,6 +817,52 @@ public class ChecklistForJira {
 				elapsed.toMillisPart() + " millisecond(s) ");	
 	}
 	
+	private static void convertCSV(Config conf, String csvFile) {
+		final String NEWLINE = "\r\n";
+		ObjectMapper strictOM = new ObjectMapper();
+		ObjectReader reader = strictOM.readerFor(new TypeReference<List<JsonChecklistItem>>(){});
+		CSVFormat csvReadFormat = CSVFormat.Builder.create()
+				.setHeader("Rule", "Name", "Template")
+				.setSkipHeaderRecord(false)
+				.build();
+		CSVFormat csvWriteFormat = CSVFormat.Builder.create()
+				.setHeader("Rule", "Name", "Template", "Translated")
+				.setSkipHeaderRecord(false)
+				.build();
+		Path inputFile = Paths.get(csvFile);
+		Path outputFile = inputFile.getParent().resolve("Translated." + inputFile.getFileName().toString());
+		try (	FileReader fr = new FileReader(inputFile.toFile()); 
+				CSVParser csvParser = new CSVParser(fr, csvReadFormat); 
+				FileWriter fw = new FileWriter(outputFile.toFile());
+				CSVPrinter csvPrinter = new CSVPrinter(fw, csvWriteFormat)) {
+			csvParser.forEach(row -> {
+				try {
+					StringBuilder sb = new StringBuilder();
+					String template = row.get(2);
+					Log.info(LOGGER, template);
+					List<JsonChecklistItem> checklist = reader.readValue(template);
+					for (JsonChecklistItem item : checklist) {
+						sb.append(NEWLINE);
+						if (item.isMandatory()) {
+							sb.append("[*]");
+						} else {
+							sb.append("[ ]");
+						}
+						sb.append(item.getName());
+					}
+					if (sb.length() != 0) {
+						sb.delete(0, 2);
+					}
+					csvPrinter.printRecord(row.get(0), row.get(1), row.get(2), sb.toString());
+				} catch (IOException ex) {
+					Log.error(LOGGER, "Error", ex);
+				}
+			});
+		} catch (Exception ex) {
+			Log.error(LOGGER, "Error", ex);
+		}
+	}
+	
 	public static void main(String[] args) throws Exception {
 		CommandLine cmd = CLI.parseCommandLine(args);
 		if (cmd != null) {
@@ -830,6 +876,10 @@ public class ChecklistForJira {
 				CLIOptions cli = CLI.CLIOptions.parse(opt);
 				if (cli != null) {
 					switch (cli) {
+					case CONVERT_CSV:
+						String jsonFile = cmd.getOptionValue(CLI.CONVERT_CSV_OPTION);
+						convertCSV(conf, jsonFile);
+						break;
 					case EXPORT_WORKFLOW:
 						exportWorkflows(conf);
 						break;

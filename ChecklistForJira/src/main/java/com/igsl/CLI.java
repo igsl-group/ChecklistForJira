@@ -14,6 +14,7 @@ public class CLI {
 	
 	// Enum so we can use switch on Option
 	public static enum CLIOptions {
+		CONVERT_CSV(CONVERT_CSV_OPTIONS, CONVERT_CSV_OPTION),
 		EXPORT_FIELD(EXPORT_FIELD_OPTIONS, EXPORT_FIELD_OPTION), 
 		TRIGGER_EXPORT(TRIGGER_EXPORT_OPTIONS, TRIGGER_EXPORT_OPTION),
 		EXPORT_USAGE(EXPORT_USAGE_OPTIONS, EXPORT_USAGE_OPTION),
@@ -48,6 +49,17 @@ public class CLI {
 			.required()
 			.hasArg()
 			.build();
+	
+	public static final Option CONVERT_CSV_OPTION = Option.builder()
+			.desc("CSV file containing checklist definitions from listener.")
+			.option("csv")
+			.longOpt("csvFile")
+			.hasArg()
+			.required()
+			.build();
+	public static final Options CONVERT_CSV_OPTIONS = new Options()
+			.addOption(CONFIG_OPTION)
+			.addOption(CONVERT_CSV_OPTION);
 	
 	public static final Option EXPORT_FIELD_OPTION = Option.builder()
 			.desc("Export Checklist for Jira custom fields. ")
