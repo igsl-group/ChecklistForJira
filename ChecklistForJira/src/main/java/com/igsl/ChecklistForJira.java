@@ -87,6 +87,9 @@ import com.igsl.mybatis.Project;
 import com.igsl.mybatis.Source;
 import com.igsl.mybatis.Workflow;
 import com.igsl.postfunction.ChecklistFunction;
+import com.igsl.rest.ClientPool;
+import com.igsl.rest.JiraObject;
+import com.igsl.rest.RestUtil;
 
 /**
  * Replacement for ChecklistForJira.ps1.
@@ -817,6 +820,38 @@ public class ChecklistForJira {
 				elapsed.toMillisPart() + " millisecond(s) ");	
 	}
 	
+	private static void getCloudProjects(Config conf) {
+		String token = conf.getTargetToken();
+		if (token == null || token.isBlank()) {
+			try {
+				token = new String(Console.readPassword("API Token"));
+				conf.setTargetToken(token);
+			} catch (IOException ioex) {
+				Log.error(LOGGER, "Unable to read API token", ioex);
+			}
+		}
+		try {
+			ClientPool.setMaxPoolSize(10, 0, 0);
+			List<com.igsl.rest.Project> projectList = 
+					JiraObject.getObjects(conf, com.igsl.rest.Project.class, true);
+			CSVFormat format = CSVFormat.Builder.create()
+					.setHeader("Project Key", "Project Name")
+					.setSkipHeaderRecord(false)
+					.build();
+			Path output = Paths.get("ProjectList." + SDF.format(new Date()) + ".csv");
+			try (	FileWriter fw = new FileWriter(output.toFile()); 
+					CSVPrinter printer = new CSVPrinter(fw, format)) {
+				for (com.igsl.rest.Project project : projectList) {
+					Log.info(LOGGER, "Project: " + project.getName() + " (" + project.getKey() + ")");
+					printer.printRecord(project.getKey(), project.getName());
+				}
+			}
+			Log.info(LOGGER, "Output file written: " + output);
+		} catch (Exception e) {
+			Log.error(LOGGER, "Error getting project list", e);
+		}
+	}
+	
 	private static void convertCSV(Config conf, String csvFile) {
 		final String NEWLINE = "\r\n";
 		ObjectMapper strictOM = new ObjectMapper();
@@ -876,6 +911,9 @@ public class ChecklistForJira {
 				CLIOptions cli = CLI.CLIOptions.parse(opt);
 				if (cli != null) {
 					switch (cli) {
+					case GET_CLOUD_PROJECTS:
+						getCloudProjects(conf);
+						break;
 					case CONVERT_CSV:
 						String jsonFile = cmd.getOptionValue(CLI.CONVERT_CSV_OPTION);
 						convertCSV(conf, jsonFile);

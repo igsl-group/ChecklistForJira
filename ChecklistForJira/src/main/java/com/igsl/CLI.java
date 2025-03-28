@@ -14,6 +14,7 @@ public class CLI {
 	
 	// Enum so we can use switch on Option
 	public static enum CLIOptions {
+		GET_CLOUD_PROJECTS(GET_CLOUD_PROJECT_OPTIONS, GET_CLOUD_PROJECT_OPTION),
 		CONVERT_CSV(CONVERT_CSV_OPTIONS, CONVERT_CSV_OPTION),
 		EXPORT_FIELD(EXPORT_FIELD_OPTIONS, EXPORT_FIELD_OPTION), 
 		TRIGGER_EXPORT(TRIGGER_EXPORT_OPTIONS, TRIGGER_EXPORT_OPTION),
@@ -49,6 +50,16 @@ public class CLI {
 			.required()
 			.hasArg()
 			.build();
+	
+	public static final Option GET_CLOUD_PROJECT_OPTION = Option.builder()
+			.desc("Get Cloud project list")
+			.option("p")
+			.longOpt("project")
+			.required()
+			.build();
+	public static final Options GET_CLOUD_PROJECT_OPTIONS = new Options()
+			.addOption(GET_CLOUD_PROJECT_OPTION)
+			.addOption(CONFIG_OPTION);
 	
 	public static final Option CONVERT_CSV_OPTION = Option.builder()
 			.desc("CSV file containing checklist definitions from listener.")
@@ -137,11 +148,9 @@ public class CLI {
 	public static void printHelp() {
 		HelpFormatter hf = new HelpFormatter();
 		String command = "java -jar ChecklistForJira-[version].jar";
-		System.out.println(command);
-		hf.printHelp(command, EXPORT_WORKFLOW_OPTIONS, true);
-		hf.printHelp(command, EXPORT_FIELD_OPTIONS, true);
-		hf.printHelp(command, TRIGGER_EXPORT_OPTIONS, true);
-		hf.printHelp(command, EXPORT_USAGE_OPTIONS, true);
+		for (CLIOptions cli : CLIOptions.values()) {
+			hf.printHelp(command, cli.getOptions(), true);
+		}
 	}
 	
 	public static CommandLine parseCommandLine(String[] args) {

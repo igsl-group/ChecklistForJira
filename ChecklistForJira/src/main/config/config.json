@@ -10,5 +10,10 @@
     
     "checklistForJiraExportDir": "[Path of Jira Application Data folder]/export/checklist",
     "concurrentExportCount": 20,
-    "exportMaxWaitMS": 3600000
+    "exportMaxWaitMS": 3600000,
+    
+    "targetScheme": "https",
+    "targetHost" : "[Domain].atlassian.net",
+    "targetUser" : "[Email]",
+    "targetToken" : "[API Token"
 }

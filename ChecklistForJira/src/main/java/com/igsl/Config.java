@@ -19,6 +19,11 @@ public class Config {
 	private int concurrentExportCount = DEFAULT_CONCURRENT_EXPORT_COUNT;
 	private long exportMaxWaitMS = DEFAULT_EXPORT_MAX_WAIT_MS;
 	
+	private String targetScheme = DEFAULT_SCHEME;
+	private String targetHost;
+	private String targetUser;
+	private String targetToken;
+	
 	// Generated
 	public String getSourceUser() {
 		return sourceUser;
@@ -98,6 +103,38 @@ public class Config {
 
 	public void setConcurrentExportCount(int concurrentExportCount) {
 		this.concurrentExportCount = concurrentExportCount;
+	}
+
+	public String getTargetScheme() {
+		return targetScheme;
+	}
+
+	public void setTargetScheme(String targetScheme) {
+		this.targetScheme = targetScheme;
+	}
+
+	public String getTargetHost() {
+		return targetHost;
+	}
+
+	public void setTargetHost(String targetHost) {
+		this.targetHost = targetHost;
+	}
+
+	public String getTargetUser() {
+		return targetUser;
+	}
+
+	public void setTargetUser(String targetUser) {
+		this.targetUser = targetUser;
+	}
+
+	public String getTargetToken() {
+		return targetToken;
+	}
+
+	public void setTargetToken(String targetToken) {
+		this.targetToken = targetToken;
 	}
 
 }
